@@ -3174,7 +3174,28 @@ function ConfiguracionPage({ data, dispatch, actor, theme, role, onResetDemo }) 
    ============================================================================ */
 
 export default function App() {
-  const [state, dispatchRaw] = useReducer(reducer, undefined, () => ({ data: SEED, lastResult: null }));
+  const [dbReady, setDbReady] = useState(false);
+  const [dbData, setDbData] = useState(null);
+  const firstSave = useRef(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/estado")
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data && (data.terceros || data.productos)) {
+          setDbData(data);
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setDbReady(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const initialState = useMemo(() => dbData || SEED, [dbData]);
+
+  const [state, dispatchRaw] = useReducer(reducer, undefined, () => ({ data: initialState, lastResult: null }));
   const [dark, setDark] = useState(false);
   const [role, setRole] = useState("admin_empresa");
   const [sedeActiva, setSedeActiva] = useState(SEDES[0].id);
@@ -3212,10 +3233,33 @@ export default function App() {
     return () => clearTimeout(t);
   }, [state.lastResult]);
 
+  useEffect(() => {
+    if (!dbReady) return;
+    if (firstSave.current) { firstSave.current = false; return; }
+    fetch("/api/estado", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state.data),
+    }).catch(() => {});
+  }, [state.data, dbReady]);
+
   useEffect(() => { if (!puedeVer(role, currentModule)) setCurrentModule("dashboard"); }, [role, currentModule]);
 
   const notifications = useMemo(() => computeAlerts(data), [data]);
   const goTo = (mod) => { setCurrentModule(mod); setMobileOpen(false); };
+
+  if (!dbReady) return (
+    <div className={cx("nx-root flex h-screen w-full items-center justify-center", themeOf(false).bg)}>
+      <style>{FONT_IMPORT}</style>
+      <div className="text-center space-y-3">
+        <div className="mx-auto h-12 w-12 rounded-2xl grid place-items-center" style={{ backgroundColor: BRAND.navy }}>
+          <span className="text-white font-bold text-lg nx-display">L</span>
+        </div>
+        <p className="nx-display font-bold text-lg" style={{ color: BRAND.navy }}>Lunaris</p>
+        <p className="text-sm text-slate-500">Conectando con la base de datos...</p>
+      </div>
+    </div>
+  );
 
   if (printPayload) return <FacturaImprimible factura={printPayload.factura} tercero={printPayload.tercero} sede={printPayload.sede} onClose={() => setPrintPayload(null)} />;
 
