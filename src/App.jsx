@@ -16,6 +16,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, AreaChart, Area
 } from "recharts";
 import * as XLSX from "xlsx";
+import { api } from "./api.js";
 import appleTouchIcon from "../apple-touch-icon.png";
 
 /* ============================================================================
@@ -3180,8 +3181,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/estado")
-      .then((r) => r.json())
+    api.getEstado()
       .then((data) => {
         if (cancelled) return;
         if (data && (data.terceros || data.productos)) {
@@ -3236,11 +3236,7 @@ export default function App() {
   useEffect(() => {
     if (!dbReady) return;
     if (firstSave.current) { firstSave.current = false; return; }
-    fetch("/api/estado", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(state.data),
-    }).catch(() => {});
+    api.saveEstado(state.data).catch(() => {});
   }, [state.data, dbReady]);
 
   useEffect(() => { if (!puedeVer(role, currentModule)) setCurrentModule("dashboard"); }, [role, currentModule]);
