@@ -663,7 +663,7 @@ const SEED = buildSeed();
 
 function reducer(state, action) {
   const { type, payload, actor } = action;
-  const draft = structuredClone(state);
+  const draft = structuredClone(state.data);
   let result;
   switch (type) {
     case "CREAR_COTIZACION": result = crearCotizacion(draft, actor, payload); break;
