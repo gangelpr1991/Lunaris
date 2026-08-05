@@ -1,18 +1,18 @@
 import React, { useState, useMemo, useReducer, useRef, useEffect } from "react";
 import {
-  LayoutDashboard, Building2, Users, ShoppingCart, Receipt, Boxes, Landmark,
-  Wallet, Calculator, FileBarChart, Smartphone, Settings, ShieldCheck, Puzzle,
+  LayoutDashboard, Users, ShoppingCart, Receipt, Boxes, Landmark,
+  Wallet, Calculator, FileBarChart, Smartphone, Settings, Puzzle,
   Search, Bell, HelpCircle, ChevronDown, ChevronRight, Sun, Moon, Menu,
-  Plus, Filter, Download, ArrowRight, CheckCircle2, XCircle, Clock, AlertTriangle,
-  FileText, CreditCard, Truck, PackageCheck, PackageMinus, PackagePlus, ClipboardList,
-  BadgeCheck, BadgeX, Ban, Printer, ScanLine, History, LogOut, ChevronsUpDown,
-  TrendingUp, TrendingDown, Store, Wallet2, BookOpen, Scale, FileSpreadsheet,
-  UserCog, KeyRound, Building, Warehouse, Tags, ListChecks, RefreshCw, Trash2,
-  Pencil, X, Check, ArrowLeftRight, CalendarClock, MapPin, Mail, Phone,
-  BarChart3, PieChart as PieChartIcon, DollarSign, AlertOctagon, Eye, ChevronLeft
+  Plus, Download, ArrowRight, CheckCircle2, Clock, AlertTriangle,
+  FileText, CreditCard, Truck, PackageCheck,
+  BadgeCheck, BadgeX, Ban, Printer, ScanLine, History, ChevronsUpDown,
+  TrendingUp, TrendingDown, Store, Wallet2, Scale, FileSpreadsheet,
+  UserCog, KeyRound, Building, Warehouse, ListChecks, RefreshCw, Trash2,
+  X, ArrowLeftRight, Mail, Phone,
+  BarChart3, PieChart as PieChartIcon, DollarSign, AlertOctagon, ChevronLeft
 } from "lucide-react";
 import {
-  ResponsiveContainer, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, AreaChart, Area
 } from "recharts";
 import * as XLSX from "xlsx";
@@ -1440,11 +1440,9 @@ function TercerosPage({ data, dispatch, actor, theme, role }) {
     { key: "saldo", label: "Saldo", render: (t) => t.tipo === "cliente" ? <span className={cx("nx-mono font-semibold", t.saldoCartera > 0 ? "text-amber-600" : theme.textMuted)}>{fmtCOP(t.saldoCartera)}</span> : <span className={cx("nx-mono font-semibold", t.saldoCxP > 0 ? "text-amber-600" : theme.textMuted)}>{fmtCOP(t.saldoCxP)}</span> },
   ];
 
-  const submit = () => {
+  const submit = async () => {
     if (!form.nombre.trim() || !form.numDoc.trim()) return;
-    dispatch({ type: "CREAR_TERCERO", payload: { ...form, cupoCredito: Number(form.cupoCredito) || 0, condicionPagoDias: Number(form.condicionPagoDias) || 0 }, actor });
-    setShowNew(false);
-    setForm({ tipo: "cliente", tipoDoc: "NIT", numDoc: "", nombre: "", email: "", telefono: "", ciudad: "", cupoCredito: 0, condicionPagoDias: 30, listaPrecios: "General" });
+    try { await dispatch({ type: "CREAR_TERCERO", payload: { ...form, cupoCredito: Number(form.cupoCredito) || 0, condicionPagoDias: Number(form.condicionPagoDias) || 0 }, actor }); setShowNew(false); setForm({ tipo: "cliente", tipoDoc: "NIT", numDoc: "", nombre: "", email: "", telefono: "", ciudad: "", cupoCredito: 0, condicionPagoDias: 30, listaPrecios: "General" }); } catch (e) { /* error shown in toast */ }
   };
 
   return (
@@ -1729,7 +1727,7 @@ function VentasPage({ data, dispatch, actor, theme, role, sedeActiva, setPrint }
       {tab === "remisiones" && (
         <Panel theme={theme}>
           <DataTable theme={theme} rows={data.remisiones} columns={remColumns} searchKeys={["numero"]} exportName="remisiones" emptyTitle="Sin remisiones"
-            rowActions={(r) => !data.facturas.some((f) => f.remisionId === r.id) && puedeEscribir(role) && <Btn theme={theme} size="sm" variant="subtle" icon={Receipt} onClick={() => { const res = dispatch({ type: "GENERAR_FACTURA", payload: { remisionId: r.id }, actor }); setTab("facturas"); }}>Generar factura</Btn>}
+            rowActions={(r) => !data.facturas.some((f) => f.remisionId === r.id) && puedeEscribir(role) && <Btn theme={theme} size="sm" variant="subtle" icon={Receipt} onClick={async () => { try { await dispatch({ type: "GENERAR_FACTURA", payload: { remisionId: r.id }, actor }); setTab("facturas"); } catch (e) { /* error shown in toast */ } }}>Generar factura</Btn>}
           />
         </Panel>
       )}
@@ -1764,10 +1762,9 @@ function NuevaCotizacionModal({ open, onClose, data, dispatch, actor, theme, sed
   const [items, setItems] = useState([]);
   useEffect(() => { if (open) { setTerceroId(data.terceros.find((t) => t.tipo === "cliente")?.id || ""); setItems([]); } }, [open]);
   const clientes = data.terceros.filter((t) => t.tipo === "cliente");
-  const submit = () => {
+  const submit = async () => {
     if (!terceroId || items.length === 0) return;
-    dispatch({ type: "CREAR_COTIZACION", payload: { terceroId, sedeId: sedeActiva, items: items.map(({ productoId, cantidad, precio, ivaPct }) => ({ productoId, cantidad, precio, ivaPct })) }, actor });
-    onClose(); onDone?.();
+    try { await dispatch({ type: "CREAR_COTIZACION", payload: { terceroId, sedeId: sedeActiva, items: items.map(({ productoId, cantidad, precio, ivaPct }) => ({ productoId, cantidad, precio, ivaPct })) }, actor }); onClose(); onDone?.(); } catch (e) { /* error shown in toast */ }
   };
   return (
     <Modal open={open} onClose={onClose} theme={theme} title="Nueva cotizacion" width="max-w-2xl" footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit} disabled={!terceroId || items.length === 0}>Guardar cotizacion</Btn></>}>
@@ -1786,9 +1783,8 @@ function NuevaCotizacionModal({ open, onClose, data, dispatch, actor, theme, sed
 function GenerarRemisionModal({ pedido, onClose, dispatch, actor, theme, onDone }) {
   const [bodegaId, setBodegaId] = useState(BODEGAS[0].id);
   useEffect(() => { if (pedido) setBodegaId(BODEGAS.find((b) => b.sedeId === pedido.sedeId)?.id || BODEGAS[0].id); }, [pedido]);
-  const submit = () => {
-    const res = dispatch({ type: "GENERAR_REMISION", payload: { pedidoId: pedido.id, bodegaId }, actor });
-    onDone?.();
+  const submit = async () => {
+    try { await dispatch({ type: "GENERAR_REMISION", payload: { pedidoId: pedido.id, bodegaId }, actor }); onDone?.(); } catch (e) { /* error shown in toast */ }
   };
   if (!pedido) return null;
   return (
@@ -1812,7 +1808,7 @@ function RegistrarReciboModal({ factura, onClose, data, dispatch, actor, theme }
   const [cajaBancoId, setCajaBancoId] = useState(data.cajasBancos[0]?.id);
   useEffect(() => { if (factura) setMonto(factura.saldo); }, [factura]);
   if (!factura) return null;
-  const submit = () => { const res = dispatch({ type: "REGISTRAR_RECIBO", payload: { facturaId: factura.id, monto: Number(monto), medioPago, cajaBancoId }, actor }); onClose(); };
+  const submit = async () => { try { await dispatch({ type: "REGISTRAR_RECIBO", payload: { facturaId: factura.id, monto: Number(monto), medioPago, cajaBancoId }, actor }); onClose(); } catch (e) { /* error shown in toast */ } };
   return (
     <Modal open={!!factura} onClose={onClose} theme={theme} title={`Registrar recibo — ${factura.numero}`} footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit}>Registrar recibo</Btn></>}>
       <div className="space-y-3">
@@ -1829,7 +1825,7 @@ function AnularFacturaModal({ factura, onClose, dispatch, actor, theme }) {
   const [motivo, setMotivo] = useState("");
   useEffect(() => { setMotivo(""); }, [factura]);
   if (!factura) return null;
-  const submit = () => { dispatch({ type: "ANULAR_FACTURA", payload: { id: factura.id, motivo }, actor }); onClose(); };
+  const submit = async () => { try { await dispatch({ type: "ANULAR_FACTURA", payload: { id: factura.id, motivo }, actor }); onClose(); } catch (e) { /* error shown in toast */ } };
   return (
     <Modal open={!!factura} onClose={onClose} theme={theme} title={`Anular factura — ${factura.numero}`} footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} variant="danger" onClick={submit} disabled={motivo.trim().length < 5}>Confirmar anulacion</Btn></>}>
       <div className="space-y-3">
@@ -1906,7 +1902,7 @@ function ComprasPage({ data, dispatch, actor, theme, role, sedeActiva }) {
       {tab === "recepciones" && (
         <Panel theme={theme}>
           <DataTable theme={theme} rows={data.recepciones} columns={rcpColumns} searchKeys={["numero"]} exportName="recepciones" emptyTitle="Sin recepciones"
-            rowActions={(r) => !data.facturasCompra.some((f) => f.recepcionId === r.id) && puedeEscribir(role) && <Btn theme={theme} size="sm" variant="subtle" icon={Receipt} onClick={() => { dispatch({ type: "GENERAR_FACTURA_COMPRA", payload: { recepcionId: r.id }, actor }); setTab("facturas"); }}>Generar factura</Btn>}
+            rowActions={(r) => !data.facturasCompra.some((f) => f.recepcionId === r.id) && puedeEscribir(role) && <Btn theme={theme} size="sm" variant="subtle" icon={Receipt} onClick={async () => { try { await dispatch({ type: "GENERAR_FACTURA_COMPRA", payload: { recepcionId: r.id }, actor }); setTab("facturas"); } catch (e) { /* error shown in toast */ } }}>Generar factura</Btn>}
           />
         </Panel>
       )}
@@ -1932,10 +1928,9 @@ function NuevaOCModal({ open, onClose, data, dispatch, actor, theme, sedeActiva,
   const [items, setItems] = useState([]);
   useEffect(() => { if (open) { setProveedorId(data.terceros.find((t) => t.tipo === "proveedor")?.id || ""); setBodegaId(BODEGAS.find((b) => b.sedeId === sedeActiva)?.id || BODEGAS[0].id); setItems([]); } }, [open]);
   const proveedores = data.terceros.filter((t) => t.tipo === "proveedor");
-  const submit = () => {
+  const submit = async () => {
     if (!proveedorId || items.length === 0) return;
-    dispatch({ type: "CREAR_OC", payload: { proveedorId, sedeId: sedeActiva, bodegaId, items: items.map(({ productoId, cantidad, costoUnitario }) => ({ productoId, cantidad, costoUnitario })) }, actor });
-    onClose(); onDone?.();
+    try { await dispatch({ type: "CREAR_OC", payload: { proveedorId, sedeId: sedeActiva, bodegaId, items: items.map(({ productoId, cantidad, costoUnitario }) => ({ productoId, cantidad, costoUnitario })) }, actor }); onClose(); onDone?.(); } catch (e) { /* error shown in toast */ }
   };
   return (
     <Modal open={open} onClose={onClose} theme={theme} title="Nueva orden de compra" width="max-w-2xl" footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit} disabled={!proveedorId || items.length === 0}>Guardar orden</Btn></>}>
@@ -1954,11 +1949,10 @@ function RecibirOCModal({ oc, onClose, dispatch, actor, theme, onDone }) {
   const [cantidades, setCantidades] = useState({});
   useEffect(() => { if (oc) { const init = {}; oc.items.forEach((i) => { const pendiente = i.cantidad - (oc.recibidoItems[i.productoId] || 0); if (pendiente > 0) init[i.productoId] = pendiente; }); setCantidades(init); } }, [oc]);
   if (!oc) return null;
-  const submit = () => {
+  const submit = async () => {
     const items = Object.entries(cantidades).filter(([, c]) => Number(c) > 0).map(([productoId, cantidad]) => ({ productoId, cantidad: Number(cantidad) }));
     if (items.length === 0) return;
-    dispatch({ type: "RECIBIR_OC", payload: { ocId: oc.id, items }, actor });
-    onClose(); onDone?.();
+    try { await dispatch({ type: "RECIBIR_OC", payload: { ocId: oc.id, items }, actor }); onClose(); onDone?.(); } catch (e) { /* error shown in toast */ }
   };
   return (
     <Modal open={!!oc} onClose={onClose} theme={theme} title={`Recibir mercancia — ${oc.numero}`} footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit}>Confirmar recepcion</Btn></>}>
@@ -1983,7 +1977,7 @@ function PagarFacturaCompraModal({ factura, onClose, data, dispatch, actor, them
   const [cajaBancoId, setCajaBancoId] = useState(data.cajasBancos[0]?.id);
   useEffect(() => { if (factura) setMonto(factura.saldo); }, [factura]);
   if (!factura) return null;
-  const submit = () => { dispatch({ type: "PAGAR_FACTURA_COMPRA", payload: { facturaCompraId: factura.id, monto: Number(monto), cajaBancoId }, actor }); onClose(); };
+  const submit = async () => { try { await dispatch({ type: "PAGAR_FACTURA_COMPRA", payload: { facturaCompraId: factura.id, monto: Number(monto), cajaBancoId }, actor }); onClose(); } catch (e) { /* error shown in toast */ } };
   return (
     <Modal open={!!factura} onClose={onClose} theme={theme} title={`Pagar factura de compra — ${factura.numero}`} footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit}>Registrar pago</Btn></>}>
       <div className="space-y-3">
@@ -2097,7 +2091,7 @@ function AjusteInventarioModal({ producto, onClose, dispatch, actor, theme }) {
   const [motivo, setMotivo] = useState("");
   useEffect(() => { setBodegaId(BODEGAS[0].id); setTipo("entrada"); setCantidad(1); setMotivo(""); }, [producto]);
   if (!producto) return null;
-  const submit = () => { dispatch({ type: "AJUSTE_INVENTARIO", payload: { productoId: producto.id, bodegaId, tipo, cantidad: Number(cantidad), motivo: motivo || "Ajuste manual" }, actor }); onClose(); };
+  const submit = async () => { try { await dispatch({ type: "AJUSTE_INVENTARIO", payload: { productoId: producto.id, bodegaId, tipo, cantidad: Number(cantidad), motivo: motivo || "Ajuste manual" }, actor }); onClose(); } catch (e) { /* error shown in toast */ } };
   return (
     <Modal open={!!producto} onClose={onClose} theme={theme} title={`Ajuste de inventario — ${producto.nombre}`} footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit} disabled={!motivo.trim()}>Aplicar ajuste</Btn></>}>
       <div className="space-y-3">
@@ -2118,7 +2112,7 @@ function TransferenciaModal({ producto, onClose, dispatch, actor, theme }) {
   const [cantidad, setCantidad] = useState(1);
   useEffect(() => { setOrigenBodegaId(BODEGAS[0].id); setDestinoBodegaId(BODEGAS[1].id); setCantidad(1); }, [producto]);
   if (!producto) return null;
-  const submit = () => { dispatch({ type: "TRANSFERENCIA_INVENTARIO", payload: { productoId: producto.id, origenBodegaId, destinoBodegaId, cantidad: Number(cantidad) }, actor }); onClose(); };
+  const submit = async () => { try { await dispatch({ type: "TRANSFERENCIA_INVENTARIO", payload: { productoId: producto.id, origenBodegaId, destinoBodegaId, cantidad: Number(cantidad) }, actor }); onClose(); } catch (e) { /* error shown in toast */ } };
   return (
     <Modal open={!!producto} onClose={onClose} theme={theme} title={`Transferencia entre bodegas — ${producto.nombre}`} footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit}>Transferir</Btn></>}>
       <div className="space-y-3">
@@ -2135,7 +2129,7 @@ function TransferenciaModal({ producto, onClose, dispatch, actor, theme }) {
 function NuevoProductoModal({ open, onClose, dispatch, actor, theme }) {
   const [form, setForm] = useState({ codigo: "", nombre: "", categoria: "General", unidad: "Unidad", precio: 0, costoPromedio: 0, iva: 19, minimo: 10, tieneLote: false });
   useEffect(() => { if (open) setForm({ codigo: "", nombre: "", categoria: "General", unidad: "Unidad", precio: 0, costoPromedio: 0, iva: 19, minimo: 10, tieneLote: false }); }, [open]);
-  const submit = () => { if (!form.codigo || !form.nombre) return; dispatch({ type: "CREAR_PRODUCTO", payload: { ...form, precio: Number(form.precio), costoPromedio: Number(form.costoPromedio), iva: Number(form.iva), minimo: Number(form.minimo) }, actor }); onClose(); };
+  const submit = async () => { if (!form.codigo || !form.nombre) return; try { await dispatch({ type: "CREAR_PRODUCTO", payload: { ...form, precio: Number(form.precio), costoPromedio: Number(form.costoPromedio), iva: Number(form.iva), minimo: Number(form.minimo) }, actor }); onClose(); } catch (e) { /* error shown in toast */ } };
   return (
     <Modal open={open} onClose={onClose} theme={theme} title="Nuevo producto" footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit}>Guardar producto</Btn></>}>
       <div className="grid grid-cols-2 gap-3">
@@ -2259,7 +2253,7 @@ function MovimientoManualModal({ modal, onClose, theme, data, dispatch, actor })
   useEffect(() => { if (modal) { setCajaBancoId(data.cajasBancos[0]?.id); setMonto(0); setConcepto(""); setCuentaContrapartida(tipo === "ingreso" ? "4140" : "5195"); } }, [modal]);
   if (!modal) return null;
   const opciones = PLAN_CUENTAS.filter((c) => (tipo === "ingreso" ? ["Ingreso", "Activo", "Pasivo"] : ["Gasto", "Activo", "Pasivo", "Costo"]).includes(c.clase));
-  const submit = () => { if (!concepto.trim() || !(Number(monto) > 0)) return; dispatch({ type: "MOVIMIENTO_TESORERIA", payload: { cajaBancoId, tipo, concepto, monto: Number(monto), cuentaContrapartida }, actor }); onClose(); };
+  const submit = async () => { if (!concepto.trim() || !(Number(monto) > 0)) return; try { await dispatch({ type: "MOVIMIENTO_TESORERIA", payload: { cajaBancoId, tipo, concepto, monto: Number(monto), cuentaContrapartida }, actor }); onClose(); } catch (e) { /* error shown in toast */ } };
   return (
     <Modal open={!!modal} onClose={onClose} theme={theme} title={tipo === "ingreso" ? "Registrar ingreso" : "Registrar egreso"} footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit}>Guardar</Btn></>}>
       <div className="space-y-3">
@@ -2277,7 +2271,7 @@ function TransferenciaTesoreriaModal({ open, onClose, data, dispatch, actor, the
   const [destinoId, setDestinoId] = useState(data.cajasBancos[1]?.id);
   const [monto, setMonto] = useState(0);
   useEffect(() => { if (open) { setOrigenId(data.cajasBancos[0]?.id); setDestinoId(data.cajasBancos[1]?.id); setMonto(0); } }, [open]);
-  const submit = () => { dispatch({ type: "TRANSFERENCIA_TESORERIA", payload: { origenId, destinoId, monto: Number(monto) }, actor }); onClose(); };
+  const submit = async () => { try { await dispatch({ type: "TRANSFERENCIA_TESORERIA", payload: { origenId, destinoId, monto: Number(monto) }, actor }); onClose(); } catch (e) { /* error shown in toast */ } };
   return (
     <Modal open={open} onClose={onClose} theme={theme} title="Transferencia entre cuentas" footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit}>Transferir</Btn></>}>
       <div className="space-y-3">
@@ -2477,10 +2471,9 @@ function NuevoComprobanteModal({ open, onClose, data, dispatch, actor, theme }) 
   const totalC = lineas.reduce((s, l) => s + (Number(l.credito) || 0), 0);
   const cuadra = Math.abs(totalD - totalC) < 1 && totalD > 0;
   const updateLinea = (i, patch) => setLineas((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
-  const submit = () => {
+  const submit = async () => {
     if (!glosa.trim() || !cuadra) return;
-    dispatch({ type: "COMPROBANTE_MANUAL", payload: { tipo, fecha: todayISO(), glosa, lineas: lineas.map((l) => ({ ...l, nombre: cuenta(l.cuenta)?.nombre, debito: Number(l.debito) || 0, credito: Number(l.credito) || 0 })) }, actor });
-    onClose();
+    try { await dispatch({ type: "COMPROBANTE_MANUAL", payload: { tipo, fecha: todayISO(), glosa, lineas: lineas.map((l) => ({ ...l, nombre: cuenta(l.cuenta)?.nombre, debito: Number(l.debito) || 0, credito: Number(l.credito) || 0 })) }, actor }); onClose(); } catch (e) { /* error shown in toast */ }
   };
   return (
     <Modal open={open} onClose={onClose} theme={theme} title="Nuevo comprobante contable" width="max-w-2xl" footer={<><Btn theme={theme} variant="secondary" onClick={onClose}>Cancelar</Btn><Btn theme={theme} onClick={submit} disabled={!cuadra || !glosa.trim()}>Contabilizar</Btn></>}>
@@ -2623,7 +2616,7 @@ function ImpuestosPage({ data, dispatch, actor, theme, role }) {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KPICard theme={theme} label="Aceptados" value={porEstado("aceptado")} icon={BadgeCheck} tone="good" />
-        <KPICard theme={theme} label="En validacion / borrador" value={porEstado("en_validacion") + porEstado("borrador")} icon={Clock} tone="warn" />
+        <KPICard theme={theme} label="Borrador" value={porEstado("borrador")} icon={Clock} tone="warn" />
         <KPICard theme={theme} label="Contingencia" value={porEstado("contingencia")} icon={AlertTriangle} tone="warn" />
         <KPICard theme={theme} label="Rechazados" value={porEstado("rechazado")} icon={BadgeX} tone="bad" />
       </div>
@@ -2638,7 +2631,7 @@ function ImpuestosPage({ data, dispatch, actor, theme, role }) {
 
       <Panel theme={theme} title="Documentos electronicos (facturas de venta)">
         <DataTable theme={theme} rows={data.facturas} columns={cols} searchKeys={["numero"]} exportName="documentos_dian"
-          filters={[{ key: "estadoDian", label: "Estado", options: ["borrador", "en_validacion", "aceptado", "contingencia", "rechazado", "anulado"].map((e) => ({ value: e, label: ESTADOS[e]?.label || e })) }]}
+          filters={[{ key: "estadoDian", label: "Estado", options: ["borrador", "aceptado", "contingencia", "rechazado", "anulado"].map((e) => ({ value: e, label: ESTADOS[e]?.label || e })) }]}
           rowActions={(f) => f.estado !== "anulada" && puedeEscribir(role) && <Btn theme={theme} size="sm" variant="secondary" icon={RefreshCw} onClick={() => dispatch({ type: "SIMULAR_DIAN", payload: { id: f.id }, actor })}>Simular respuesta</Btn>}
         />
       </Panel>
@@ -2942,22 +2935,35 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [printPayload, setPrintPayload] = useState(null);
   const [toast, setToast] = useState(null);
+  const pendingDispatch = useRef(null);
 
   const theme = useMemo(() => themeOf(dark), [dark]);
   const actor = useMemo(() => ({ usuario: "Usuario Demo Lunaris", rol: role }), [role]);
   const data = state.data;
 
-  const dispatch = (action) => dispatchRaw({ ...action, actor: action.actor || actor });
+  const dispatch = (action) => {
+    dispatchRaw({ ...action, actor: action.actor || actor });
+    return new Promise((resolve, reject) => {
+      pendingDispatch.current = { resolve, reject };
+    });
+  };
 
   useEffect(() => {
     if (!state.lastResult) return;
-    if (state.lastResult.ok) setToast({ ok: true, message: "Operacion realizada correctamente." });
-    else setToast({ ok: false, message: state.lastResult.error });
+    if (pendingDispatch.current) {
+      const { resolve, reject } = pendingDispatch.current;
+      pendingDispatch.current = null;
+      if (state.lastResult.ok) { setToast({ ok: true, message: "Operacion realizada correctamente." }); resolve(); }
+      else { setToast({ ok: false, message: state.lastResult.error }); reject(new Error(state.lastResult.error)); }
+    } else {
+      if (state.lastResult.ok) setToast({ ok: true, message: "Operacion realizada correctamente." });
+      else setToast({ ok: false, message: state.lastResult.error });
+    }
     const t = setTimeout(() => setToast(null), 4200);
     return () => clearTimeout(t);
   }, [state.lastResult]);
 
-  useEffect(() => { if (!puedeVer(role, currentModule)) setCurrentModule("dashboard"); }, [role]);
+  useEffect(() => { if (!puedeVer(role, currentModule)) setCurrentModule("dashboard"); }, [role, currentModule]);
 
   const notifications = useMemo(() => computeAlerts(data), [data]);
   const goTo = (mod) => { setCurrentModule(mod); setMobileOpen(false); };
