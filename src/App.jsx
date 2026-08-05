@@ -689,7 +689,7 @@ function reducer(state, action) {
     default: return state;
   }
   if (result && result.error) return { data: state.data, lastResult: { ok: false, error: result.error, ts: Date.now() } };
-  return { data: draft, lastResult: { ok: true, ts: Date.now() } };
+  return { data: draft, lastResult: { ok: true, result, ts: Date.now() } };
 }
 
 /* ============================================================================
@@ -1024,7 +1024,7 @@ const NAV = [
   ]},
   { group: "Comercial", items: [
     { key: "ventas", label: "Ventas y facturacion", icon: Receipt, estado: "funcional" },
-    { key: "pos", label: "Punto de venta (POS)", icon: Store, estado: "simulado" },
+    { key: "pos", label: "Punto de venta (POS)", icon: Store, estado: "funcional" },
     { key: "cartera", label: "Cartera (CxC)", icon: Wallet2, estado: "funcional" },
   ]},
   { group: "Cadena de suministro", items: [
@@ -2502,46 +2502,90 @@ function NuevoComprobanteModal({ open, onClose, data, dispatch, actor, theme }) 
 }
 
 /* ============================================================================
-   MODULO: PUNTO DE VENTA (POS) — funcional en carrito/busqueda, checkout simulado
+   MODULO: PUNTO DE VENTA (POS) — funcional con inventario y facturacion real
    ============================================================================ */
 
-function POSPage({ data, theme, role }) {
+function POSPage({ data, dispatch, actor, theme, role, sedeActiva }) {
   const [q, setQ] = useState("");
   const [cart, setCart] = useState([]);
   const [clienteId, setClienteId] = useState(data.terceros.find((t) => t.tipo === "cliente")?.id);
-  const [toast, setToast] = useState(false);
+  const [cobrando, setCobrando] = useState(false);
+  const [posMsg, setPosMsg] = useState(null);
+
+  const bodegaId = BODEGAS.find((b) => b.sedeId === sedeActiva)?.id || BODEGAS[0].id;
+  const cajaId = data.cajasBancos.find((c) => c.sedeId === sedeActiva && c.tipo === "caja")?.id || data.cajasBancos[0]?.id;
+  const bodegaNombre = BODEGAS.find((b) => b.id === bodegaId)?.nombre;
+
   const productos = data.productos.filter((p) => p.categoria !== "Servicios" && (p.nombre.toLowerCase().includes(q.toLowerCase()) || p.codigo.toLowerCase().includes(q.toLowerCase())));
   const add = (p) => setCart((c) => { const ex = c.find((i) => i.id === p.id); return ex ? c.map((i) => (i.id === p.id ? { ...i, qty: i.qty + 1 } : i)) : [...c, { ...p, qty: 1 }]; });
+  const removeFromCart = (id) => setCart((c) => c.filter((i) => i.id !== id));
   const total = cart.reduce((s, i) => s + i.qty * i.precio * 1.19, 0);
+
+  const cobrar = async () => {
+    if (!puedeEscribir(role)) return;
+    setCobrando(true);
+    setPosMsg(null);
+    try {
+      for (const item of cart) {
+        const stock = (data.productos.find((p) => p.id === item.id)?.stock[bodegaId] || 0);
+        if (stock < item.qty) {
+          setPosMsg({ ok: false, text: `Stock insuficiente: ${item.nombre} (disponible: ${stock}, requerido: ${item.qty})` });
+          setCobrando(false);
+          return;
+        }
+      }
+      const items = cart.map((i) => ({ productoId: i.id, cantidad: i.qty, precio: i.precio, ivaPct: 19 }));
+      const cot = await dispatch({ type: "CREAR_COTIZACION", payload: { terceroId: clienteId, sedeId: sedeActiva, items }, actor });
+      await dispatch({ type: "APROBAR_COTIZACION", payload: { id: cot.id }, actor });
+      const ped = await dispatch({ type: "CONVERTIR_PEDIDO", payload: { id: cot.id }, actor });
+      const rem = await dispatch({ type: "GENERAR_REMISION", payload: { pedidoId: ped.id, bodegaId }, actor });
+      const fac = await dispatch({ type: "GENERAR_FACTURA", payload: { remisionId: rem.id }, actor });
+      await dispatch({ type: "REGISTRAR_RECIBO", payload: { facturaId: fac.id, monto: fac.total, medioPago: "Efectivo", cajaBancoId: cajaId }, actor });
+      setCart([]);
+      setPosMsg({ ok: true, text: `Factura ${fac.numero} — ${fmtCOP(fac.total)} — pagada` });
+      setTimeout(() => setPosMsg(null), 5000);
+    } catch (e) {
+      /* error shown in toast */
+    }
+    setCobrando(false);
+  };
 
   return (
     <div className="space-y-4">
       <Breadcrumb theme={theme} items={["Lunaris", "Punto de venta"]} />
-      <div className={cx("rounded-lg p-3 text-xs flex items-center gap-2 bg-amber-50 text-amber-700")}><AlertTriangle size={14} /> Modulo simulado: el carrito y la busqueda son funcionales; el cobro final no contabiliza ni descuenta inventario en este MVP (pendiente de integrar con pasarela de pago y modo offline).</div>
+      {!puedeEscribir(role) && <div className={cx("rounded-lg p-3 text-xs flex items-center gap-2 bg-red-50 text-red-700")}><AlertTriangle size={14} /> El rol actual es de solo lectura. Cambia a un rol con permisos de escritura para operar el POS.</div>}
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-3">
           <div className={cx("flex items-center gap-2 rounded-lg border px-3 py-2", theme.input)}><ScanLine size={16} className={theme.textFaint} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar o escanear codigo de barras..." className="bg-transparent outline-none text-sm w-full" /></div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-            {productos.map((p) => (
-              <button key={p.id} onClick={() => add(p)} className={cx("rounded-xl border p-3 text-left hover:shadow-md transition-shadow", theme.surface, theme.border)}>
-                <p className={cx("text-xs font-semibold line-clamp-2 mb-1", theme.text)}>{p.nombre}</p>
-                <p className="nx-mono text-sm font-bold" style={{ color: BRAND.navy }}>{fmtCOP(p.precio)}</p>
-              </button>
-            ))}
+            {productos.map((p) => {
+              const stock = data.productos.find((x) => x.id === p.id)?.stock[bodegaId] || 0;
+              return (
+                <button key={p.id} onClick={() => add(p)} disabled={stock <= 0} className={cx("rounded-xl border p-3 text-left transition-shadow disabled:opacity-40", theme.surface, theme.border, stock > 0 && "hover:shadow-md")}>
+                  <p className={cx("text-xs font-semibold line-clamp-2 mb-1", theme.text)}>{p.nombre}</p>
+                  <p className="nx-mono text-sm font-bold" style={{ color: BRAND.navy }}>{fmtCOP(p.precio)}</p>
+                  <p className={cx("text-[10px] mt-0.5", stock <= 0 ? "text-red-500" : theme.textMuted)}>{stock <= 0 ? "Agotado" : `Stock: ${stock}`}</p>
+                </button>
+              );
+            })}
           </div>
         </div>
-        <Panel theme={theme} title="Venta actual">
-          <select className={cx(inputCls(theme), "mb-3")} value={clienteId} onChange={(e) => setClienteId(e.target.value)}>{CLIENTES(data).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select>
+        <Panel theme={theme} title={`Venta — ${bodegaNombre}`} subtitle={SEDES.find((s) => s.id === sedeActiva)?.nombre}>
+          <Field theme={theme} label="Cliente"><select className={cx(inputCls(theme), "mb-3")} value={clienteId || ""} onChange={(e) => setClienteId(e.target.value)}>{CLIENTES(data).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></Field>
           <div className="space-y-1.5 max-h-64 overflow-y-auto nx-scroll mb-3">
-            {cart.length === 0 ? <EmptyState theme={theme} icon={Store} title="Carrito vacio" /> : cart.map((i) => (
+            {cart.length === 0 ? <EmptyState theme={theme} icon={Store} title="Carrito vacio" hint="Toca un producto para agregarlo." /> : cart.map((i) => (
               <div key={i.id} className={cx("flex items-center justify-between text-xs rounded-lg px-2.5 py-2", theme.surfaceAlt)}>
-                <span>{i.nombre} x{i.qty}</span><span className="nx-mono">{fmtCOP(i.qty * i.precio * 1.19)}</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => removeFromCart(i.id)} className="text-red-400 hover:text-red-600"><X size={12} /></button>
+                  <span>{i.nombre} x{i.qty}</span>
+                </div>
+                <span className="nx-mono">{fmtCOP(i.qty * i.precio * 1.19)}</span>
               </div>
             ))}
           </div>
-          <div className={cx("flex justify-between font-bold border-t pt-2 mb-3", theme.border)}><span>Total</span><span className="nx-mono">{fmtCOP(total)}</span></div>
-          <Btn theme={theme} className="w-full" disabled={cart.length === 0} onClick={() => { setToast(true); setCart([]); setTimeout(() => setToast(false), 3000); }}>Cobrar (simulado)</Btn>
-          {toast && <p className="text-xs text-emerald-600 mt-2 text-center">Venta simulada registrada. En produccion generaria factura POS y descuento de inventario automatico.</p>}
+          <div className={cx("flex justify-between font-bold border-t pt-2 mb-3", theme.border)}><span>Total</span><span className="nx-mono text-lg">{fmtCOP(total)}</span></div>
+          {puedeEscribir(role) && <Btn theme={theme} className="w-full" disabled={cart.length === 0 || cobrando} onClick={cobrar}>{cobrando ? "Procesando..." : "Cobrar (efectivo)"}</Btn>}
+          {posMsg && <p className={cx("text-xs mt-2 text-center font-semibold", posMsg.ok ? "text-emerald-600" : "text-red-600")}>{posMsg.text}</p>}
         </Panel>
       </div>
     </div>
@@ -2953,7 +2997,7 @@ export default function App() {
     if (pendingDispatch.current) {
       const { resolve, reject } = pendingDispatch.current;
       pendingDispatch.current = null;
-      if (state.lastResult.ok) { setToast({ ok: true, message: "Operacion realizada correctamente." }); resolve(); }
+      if (state.lastResult.ok) { setToast({ ok: true, message: "Operacion realizada correctamente." }); resolve(state.lastResult.result); }
       else { setToast({ ok: false, message: state.lastResult.error }); reject(new Error(state.lastResult.error)); }
     } else {
       if (state.lastResult.ok) setToast({ ok: true, message: "Operacion realizada correctamente." });
