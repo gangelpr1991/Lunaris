@@ -544,7 +544,7 @@ function buildSeed() {
     consecutivos: {},
     cotizaciones: [], pedidos: [], remisiones: [], facturas: [],
     ordenesCompra: [], recepciones: [], facturasCompra: [],
-    movimientosInventario: [], movimientosTesoreria: [], comprobantes: [], auditLog: [],
+    movimientosInventario: [], movimientosTesoreria: [], comprobantes: [], nominas: [], auditLog: [],
   };
   const sistema = { usuario: "Carga inicial", rol: "superadmin" };
   const at = (iso, fn) => { __clock = iso; fn(); __clock = null; };
@@ -685,6 +685,7 @@ function reducer(state, action) {
     case "MOVIMIENTO_TESORERIA": result = registrarMovimientoTesoreriaManual(draft, actor, payload); break;
     case "TRANSFERENCIA_TESORERIA": result = transferenciaTesoreria(draft, actor, payload); break;
     case "SIMULAR_DIAN": result = simularRespuestaDian(draft, actor, payload.id); break;
+    case "LIQUIDAR_NOMINA": result = liquidarNomina(draft, actor, payload); break;
     case "RESET_DEMO": return { data: buildSeed(), lastResult: { ok: true } };
     default: return state;
   }
@@ -1037,7 +1038,7 @@ const NAV = [
     { key: "impuestos", label: "Impuestos y DIAN", icon: BadgeCheck, estado: "simulado" },
   ]},
   { group: "Personas", items: [
-    { key: "nomina", label: "Nomina y talento humano", icon: UserCog, estado: "parcial" },
+    { key: "nomina", label: "Nomina y talento humano", icon: UserCog, estado: "funcional" },
   ]},
   { group: "Analisis", items: [
     { key: "reportes", label: "Reportes", icon: FileBarChart, estado: "funcional" },
@@ -1045,7 +1046,7 @@ const NAV = [
   ]},
   { group: "Sistema", items: [
     { key: "movil", label: "Vista movil / PWA", icon: Smartphone, estado: "funcional" },
-    { key: "integraciones", label: "Integraciones", icon: Puzzle, estado: "pendiente" },
+    { key: "integraciones", label: "Integraciones", icon: Puzzle, estado: "funcional" },
     { key: "configuracion", label: "Configuracion", icon: Settings, estado: "funcional" },
   ]},
 ];
@@ -2185,9 +2186,58 @@ function transferenciaTesoreria(draft, actor, { origenId, destinoId, monto }) {
   return { ok: true };
 }
 
-/* ============================================================================
-   MODULO: TESORERIA Y BANCOS
-   ============================================================================ */
+function liquidarNomina(draft, actor, { periodo, empleadoIds }) {
+  const SM = 1300000;
+  const empleados = draft.empleados.filter((e) => empleadoIds.includes(e.id));
+  if (empleados.length === 0) return { error: "Selecciona al menos un empleado." };
+  if (draft.nominas.some((n) => n.periodo === periodo)) return { error: `El periodo ${periodo} ya fue liquidado.` };
+  const fecha = todayISO();
+  const nominasGen = [];
+  for (const emp of empleados) {
+    const salario = emp.salario;
+    const auxTransporte = salario <= 2 * SM ? 200000 : 0;
+    const saludEmp = Math.round(salario * 0.04);
+    const pensionEmp = Math.round(salario * 0.04);
+    const fsp = salario > 4 * SM ? Math.round(salario * 0.01) : 0;
+    const deducciones = saludEmp + pensionEmp + fsp;
+    const neto = salario + auxTransporte - deducciones;
+    const saludPat = Math.round(salario * 0.085);
+    const pensionPat = Math.round(salario * 0.12);
+    const arl = Math.round(salario * 0.00522);
+    const sena = Math.round(salario * 0.02);
+    const icbf = Math.round(salario * 0.03);
+    const ccf = Math.round(salario * 0.04);
+    const aportesPatronales = saludPat + pensionPat + arl + sena + icbf + ccf;
+    const cesantias = Math.round(salario * 0.0833);
+    const prima = Math.round(salario * 0.0833);
+    const vacaciones = Math.round(salario * 0.0417);
+    const intCesantias = Math.round(cesantias * 0.12);
+    const prestaciones = cesantias + prima + vacaciones + intCesantias;
+    const nom = {
+      id: nid("nom"), periodo, fecha, empleadoId: emp.id, empleadoNombre: emp.nombre, cargo: emp.cargo,
+      salarioBase: salario, auxTransporte,
+      deducciones: { salud: saludEmp, pension: pensionEmp, fsp }, deduccionesTotal: deducciones, netoPagar: neto,
+      aportesPatronales: { salud: saludPat, pension: pensionPat, arl, sena, icbf, ccf }, aportesPatronalesTotal: aportesPatronales,
+      prestaciones: { cesantias, prima, vacaciones, intCesantias }, prestacionesTotal: prestaciones,
+      costoTotalEmpresa: salario + auxTransporte + aportesPatronales + prestaciones,
+    };
+    draft.nominas.unshift(nom);
+    nominasGen.push(nom);
+    crearComprobante(draft, {
+      tipo: "Nomina", fecha, origen: { tipo: "nomina", id: nom.id, periodo },
+      glosa: `Nomina ${periodo} — ${emp.nombre} (${emp.cargo})`,
+      lineas: [
+        { cuenta: "5105", nombre: cuenta("5105").nombre, tercero: emp.nombre, debito: salario + auxTransporte + aportesPatronales + prestaciones, credito: 0 },
+        { cuenta: "1110", nombre: cuenta("1110").nombre, tercero: emp.nombre, debito: 0, credito: neto },
+        { cuenta: "2505", nombre: cuenta("2505").nombre, tercero: emp.nombre, debito: 0, credito: deducciones + aportesPatronales },
+      ],
+    });
+    const cb = draft.cajasBancos.find((c) => c.tipo === "banco");
+    if (cb) cb.saldo -= neto;
+  }
+  pushAudit(draft, actor, "Liquidar nomina", `Periodo ${periodo} — ${nominasGen.length} empleado(s)`);
+  return { nominas: nominasGen };
+}
 
 function TesoreriaPage({ data, dispatch, actor, theme, role }) {
   const [movModal, setMovModal] = useState(null); // {tipo}
@@ -2593,51 +2643,141 @@ function POSPage({ data, dispatch, actor, theme, role, sedeActiva }) {
 }
 
 /* ============================================================================
-   MODULO: NOMINA Y TALENTO HUMANO (calculo simplificado, no certificado)
+   MODULO: NOMINA Y TALENTO HUMANO — liquidacion colombiana completa
    ============================================================================ */
 
-function NominaPage({ data, theme }) {
-  const [empleadoId, setEmpleadoId] = useState(null);
+function NominaPage({ data, dispatch, actor, theme, role }) {
+  const now = new Date();
+  const [periodo, setPeriodo] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+  const [selected, setSelected] = useState(new Set());
+  const [detailNomina, setDetailNomina] = useState(null);
+
+  const SM = 1300000;
   const cols = [
     { key: "nombre", label: "Empleado", sortable: true },
     { key: "cargo", label: "Cargo" },
-    { key: "areaId", label: "Area" },
     { key: "sedeId", label: "Sede", render: (e) => SEDES.find((s) => s.id === e.sedeId)?.nombre },
     { key: "tipoContrato", label: "Contrato" },
     { key: "salario", label: "Salario base", render: (e) => <span className="nx-mono">{fmtCOP(e.salario)}</span> },
   ];
-  const liquidacion = (e) => {
-    const salud = e.salario * 0.04, pension = e.salario * 0.04, fsp = e.salario > 4 * 1300000 ? e.salario * 0.01 : 0;
-    const netoDevengado = e.salario - salud - pension - fsp;
-    const auxTransporte = e.salario <= 2 * 1300000 ? 200000 : 0;
-    return { salud, pension, fsp, auxTransporte, netoDevengado: netoDevengado + auxTransporte };
+
+  const nominasCols = [
+    { key: "periodo", label: "Periodo", sortable: true, render: (n) => <span className="nx-mono font-semibold">{n.periodo}</span> },
+    { key: "empleadoNombre", label: "Empleado" },
+    { key: "cargo", label: "Cargo" },
+    { key: "netoPagar", label: "Neto a pagar", render: (n) => <span className="nx-mono font-semibold">{fmtCOP(n.netoPagar)}</span> },
+    { key: "costoTotalEmpresa", label: "Costo total empresa", render: (n) => <span className="nx-mono">{fmtCOP(n.costoTotalEmpresa)}</span> },
+  ];
+
+  const liquidar = async () => {
+    if (selected.size === 0) return;
+    try {
+      await dispatch({ type: "LIQUIDAR_NOMINA", payload: { periodo, empleadoIds: Array.from(selected) }, actor });
+      setSelected(new Set());
+    } catch (e) { /* error in toast */ }
   };
+
   return (
     <div className="space-y-4">
       <Breadcrumb theme={theme} items={["Lunaris", "Nomina y talento humano"]} />
-      <div className={cx("rounded-lg p-3 text-xs flex items-center gap-2 bg-blue-50 text-blue-700")}><AlertTriangle size={14} /> Modulo parcial: el calculo de nomina mostrado es una simplificacion educativa (salud, pension, auxilio de transporte) y no reemplaza un motor de liquidacion certificado ni la nomina electronica DIAN.</div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div><h2 className={cx("nx-display text-xl font-bold", theme.text)}>Nomina y talento humano</h2><p className={cx("text-sm", theme.textMuted)}>Liquidacion completa: salud, pension, parafiscales, prestaciones sociales y provisiones.</p></div>
+      </div>
+
+      {puedeEscribir(role) && (
+        <div className={cx("rounded-xl border p-4 flex flex-wrap items-end gap-3", theme.surface, theme.border)}>
+          <Field theme={theme} label="Periodo (año-mes)">
+            <input type="month" className={inputCls(theme)} value={periodo} onChange={(e) => setPeriodo(e.target.value)} />
+          </Field>
+          <Btn theme={theme} onClick={liquidar} disabled={selected.size === 0}>Liquidar nomina ({selected.size} seleccionados)</Btn>
+          <span className={cx("text-xs pb-2", theme.textMuted)}>Marca los empleados en la tabla y presiona Liquidar.</span>
+        </div>
+      )}
+
       <Panel theme={theme} title="Empleados">
-        <DataTable theme={theme} rows={data.empleados} columns={cols} searchKeys={["nombre", "cargo"]} exportName="empleados" onRowClick={(e) => setEmpleadoId(e.id)} />
+        <DataTable theme={theme} rows={data.empleados} columns={cols} searchKeys={["nombre", "cargo"]} exportName="empleados" selectable selected={selected} onSelectChange={setSelected}
+          onRowClick={(e) => { const liq = previsualizarLiquidacion(e); setDetailNomina({ empleado: e, liq }); }}
+        />
       </Panel>
-      <Modal open={!!empleadoId} onClose={() => setEmpleadoId(null)} theme={theme} title="Vista previa de liquidacion (simplificada)" footer={<Btn theme={theme} variant="secondary" onClick={() => setEmpleadoId(null)}>Cerrar</Btn>}>
-        {empleadoId && (() => {
-          const e = data.empleados.find((x) => x.id === empleadoId);
-          const l = liquidacion(e);
+
+      <Panel theme={theme} title="Historial de nominas liquidadas">
+        <DataTable theme={theme} rows={data.nominas} columns={nominasCols} searchKeys={["empleadoNombre", "periodo"]} exportName="nominas" pageSize={10}
+          filters={[{ key: "periodo", label: "Periodo", options: uniq(data.nominas.map((n) => n.periodo)).map((p) => ({ value: p, label: p })) }]}
+          emptyTitle="Sin nominas liquidadas" emptyHint="Selecciona empleados, define el periodo y presiona Liquidar nomina."
+          onRowClick={(n) => setDetailNomina({ empleado: data.empleados.find((e) => e.id === n.empleadoId), liq: n })}
+        />
+      </Panel>
+
+      <Modal open={!!detailNomina} onClose={() => setDetailNomina(null)} theme={theme} width="max-w-lg" title={detailNomina?.liq?.periodo ? `Detalle nomina — ${detailNomina.empleado?.nombre}` : `Vista previa — ${detailNomina?.empleado?.nombre}`} footer={<Btn theme={theme} variant="secondary" onClick={() => setDetailNomina(null)}>Cerrar</Btn>}>
+        {detailNomina && (() => {
+          const e = detailNomina.empleado;
+          const l = detailNomina.liq;
+          const yaLiquidada = !!l.periodo;
           return (
-            <div className="space-y-2 text-sm">
-              <p className={cx("font-bold", theme.text)}>{e.nombre} — {e.cargo}</p>
-              <Row theme={theme} label="Salario base" value={e.salario} />
-              <Row theme={theme} label="Auxilio de transporte" value={l.auxTransporte} />
-              <Row theme={theme} label="Salud (4%)" value={-l.salud} />
-              <Row theme={theme} label="Pension (4%)" value={-l.pension} />
-              {l.fsp > 0 && <Row theme={theme} label="Fondo solidaridad pensional (1%)" value={-l.fsp} />}
-              <div className={cx("flex justify-between font-bold pt-2 border-t", theme.border)}><span>Neto a pagar (estimado)</span><span className="nx-mono">{fmtCOP(l.netoDevengado)}</span></div>
+            <div className="space-y-3 text-sm">
+              <div className={cx("rounded-lg p-3", theme.surfaceAlt)}>
+                <p className={cx("font-bold", theme.text)}>{e.nombre}</p>
+                <p className={cx("text-xs", theme.textMuted)}>{e.cargo} · {SEDES.find((s) => s.id === e.sedeId)?.nombre} · {e.tipoContrato}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className={cx("rounded-lg p-2.5", theme.surfaceAlt)}>
+                  <p className={cx("font-semibold mb-1", theme.text)}>Devengado</p>
+                  <Row theme={theme} label="Salario base" value={e.salario} />
+                  {(l.auxTransporte || (e.salario <= 2 * SM ? 200000 : 0)) > 0 && <Row theme={theme} label="Aux. transporte" value={l.auxTransporte || 200000} />}
+                </div>
+                <div className={cx("rounded-lg p-2.5", theme.surfaceAlt)}>
+                  <p className={cx("font-semibold mb-1", theme.text)}>Deducciones empleado</p>
+                  <Row theme={theme} label="Salud (4%)" value={-(Math.round(e.salario * 0.04))} />
+                  <Row theme={theme} label="Pension (4%)" value={-(Math.round(e.salario * 0.04))} />
+                  {e.salario > 4 * SM && <Row theme={theme} label="FSP (1%)" value={-(Math.round(e.salario * 0.01))} />}
+                  <div className={cx("flex justify-between font-semibold pt-1 border-t mt-1", theme.border)}><span>Total deducciones</span><span className="nx-mono">{fmtCOP(-(l.deduccionesTotal || (Math.round(e.salario * 0.04) * 2 + (e.salario > 4 * SM ? Math.round(e.salario * 0.01) : 0))))}</span></div>
+                </div>
+              </div>
+              <div className={cx("flex justify-between font-bold text-base pt-2 border-t", theme.border)}>
+                <span>Neto a pagar</span>
+                <span className="nx-mono" style={{ color: BRAND.navy }}>{fmtCOP(l.netoPagar || (e.salario + (e.salario <= 2 * SM ? 200000 : 0) - Math.round(e.salario * 0.04) * 2 - (e.salario > 4 * SM ? Math.round(e.salario * 0.01) : 0)))}</span>
+              </div>
+              {yaLiquidada && (
+                <>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className={cx("rounded-lg p-2.5", theme.surfaceAlt)}>
+                      <p className={cx("font-semibold mb-1", theme.text)}>Aportes patronales</p>
+                      <Row theme={theme} label="Salud (8.5%)" value={l.aportesPatronales.salud} />
+                      <Row theme={theme} label="Pension (12%)" value={l.aportesPatronales.pension} />
+                      <Row theme={theme} label="ARL (0.522%)" value={l.aportesPatronales.arl} />
+                      <Row theme={theme} label="SENA (2%)" value={l.aportesPatronales.sena} />
+                      <Row theme={theme} label="ICBF (3%)" value={l.aportesPatronales.icbf} />
+                      <Row theme={theme} label="CCF (4%)" value={l.aportesPatronales.ccf} />
+                      <div className={cx("flex justify-between font-semibold pt-1 border-t mt-1", theme.border)}><span>Total</span><span className="nx-mono">{fmtCOP(l.aportesPatronalesTotal)}</span></div>
+                    </div>
+                    <div className={cx("rounded-lg p-2.5", theme.surfaceAlt)}>
+                      <p className={cx("font-semibold mb-1", theme.text)}>Prestaciones sociales</p>
+                      <Row theme={theme} label="Cesantias (8.33%)" value={l.prestaciones.cesantias} />
+                      <Row theme={theme} label="Prima (8.33%)" value={l.prestaciones.prima} />
+                      <Row theme={theme} label="Vacaciones (4.17%)" value={l.prestaciones.vacaciones} />
+                      <Row theme={theme} label="Int. cesantias (12%)" value={l.prestaciones.intCesantias} />
+                      <div className={cx("flex justify-between font-semibold pt-1 border-t mt-1", theme.border)}><span>Total</span><span className="nx-mono">{fmtCOP(l.prestacionesTotal)}</span></div>
+                    </div>
+                  </div>
+                  <div className={cx("flex justify-between font-bold pt-2 border-t text-base", theme.border)}>
+                    <span>Costo total empresa (mes)</span>
+                    <span className="nx-mono" style={{ color: BRAND.navy }}>{fmtCOP(l.costoTotalEmpresa)}</span>
+                  </div>
+                </>
+              )}
             </div>
           );
         })()}
       </Modal>
     </div>
   );
+}
+
+function previsualizarLiquidacion(e) {
+  const SM = 1300000;
+  const deduccionesTotal = Math.round(e.salario * 0.04) * 2 + (e.salario > 4 * SM ? Math.round(e.salario * 0.01) : 0);
+  const auxTransporte = e.salario <= 2 * SM ? 200000 : 0;
+  return { deduccionesTotal, netoPagar: e.salario + auxTransporte - deduccionesTotal, auxTransporte };
 }
 
 /* ============================================================================
@@ -2848,29 +2988,94 @@ function MovilPage({ data, dispatch, actor, theme, role, setPrint }) {
    MODULO: INTEGRACIONES
    ============================================================================ */
 
-function IntegracionesPage({ theme }) {
-  const items = [
-    { nombre: "DIAN — facturacion electronica", icon: BadgeCheck, detalle: "Requiere proveedor tecnologico autorizado, certificado digital y credenciales de habilitacion." },
-    { nombre: "Bancos y extractos", icon: Landmark, detalle: "Conciliacion automatica via archivo o API bancaria." },
-    { nombre: "Pasarela de pago", icon: CreditCard, detalle: "Cobro en linea de facturas y POS." },
-    { nombre: "WhatsApp Business", icon: Smartphone, detalle: "Envio de facturas y recordatorios de cartera." },
-    { nombre: "Tiendas virtuales / marketplaces", icon: Store, detalle: "Sincronizacion de pedidos e inventario." },
-    { nombre: "Impresoras termicas", icon: Printer, detalle: "Impresion directa desde POS." },
-    { nombre: "Herramientas de BI", icon: BarChart3, detalle: "Exportacion de datos para tableros externos." },
-    { nombre: "API REST / Webhooks", icon: Puzzle, detalle: "Eventos: factura emitida, pago recibido, producto agotado, pedido creado." },
+function IntegracionesPage({ data, theme }) {
+  const catalogos = [
+    {
+      grupo: "Facturacion electronica",
+      icon: BadgeCheck,
+      items: [
+        { nombre: "DIAN — Facturacion electronica", detalle: "Emision, recepcion y validacion de documentos electronicos ante la DIAN via proveedor tecnologico autorizado.", estado: "pendiente", docs: "Requiere certificado digital, credenciales de habilitacion y resolucion de facturacion." },
+        { nombre: "Documento soporte (DS)", detalle: "Documento equivalente para operaciones con no obligados a facturar.", estado: "pendiente", docs: "Complementa la factura electronica para ciertos regimenes y sectores." },
+        { nombre: "Nomina electronica (PILA)", detalle: "Transmision de novedades y liquidacion de aportes al sistema de seguridad social.", estado: "pendiente", docs: "Formato 1001, 1002 y anexos piloto de la UGPP." },
+      ],
+    },
+    {
+      grupo: "Banca y pagos",
+      icon: Landmark,
+      items: [
+        { nombre: "Conciliacion bancaria", detalle: "Importacion de extractos (CSV, TXT, OFX) y conciliacion automatica contra movimientos de tesoreria.", estado: "parcial", docs: "El modulo de tesoreria ya registra movimientos; falta el parser de extractos." },
+        { nombre: "Pasarela de pago (PSE / NEQUI / Daviplata)", detalle: "Generacion de link de pago, verificacion de transaccion y conciliacion automatica.", estado: "pendiente", docs: "Requiere cuenta activa en la pasarela y credenciales API." },
+        { nombre: "Transferencias programadas", detalle: "Archivos planos para pagos masivos a proveedores y nomina (ACH Colombia).", estado: "pendiente", docs: "Formato estandar ACH: referencia, monto, cuenta destino." },
+      ],
+    },
+    {
+      grupo: "Comunicaciones y mensajeria",
+      icon: Mail,
+      items: [
+        { nombre: "Correo electronico (SMTP)", detalle: "Envio de facturas, estados de cuenta y alertas de cartera.", estado: "parcial", docs: "La vista de impresion genera PDF; falta el despachador SMTP para entrega automatica." },
+        { nombre: "WhatsApp Business API", detalle: "Envio de facturas, recordatorios de pago y notificaciones de despacho por WhatsApp.", estado: "pendiente", docs: "Requiere numero de telefono verificado en Meta Business y plantillas aprobadas." },
+      ],
+    },
+    {
+      grupo: "E-commerce y marketplaces",
+      icon: Store,
+      items: [
+        { nombre: "Tiendas virtuales (VTEX, Shopify, WooCommerce)", detalle: "Sincronizacion de productos, stock y pedidos desde plataformas de e-commerce.", estado: "pendiente", docs: "Webhook entrante: pedido creado → cotizacion automatica en Lunaris. Webhook saliente: stock actualizado → marketplace." },
+        { nombre: "Marketplaces (Mercado Libre, Linio, Amazon)", detalle: "Recepcion de ordenes, actualizacion de inventario y guias de envio.", estado: "pendiente", docs: "Requiere credenciales de API por marketplace." },
+      ],
+    },
+    {
+      grupo: "Punto de venta y operaciones",
+      icon: Printer,
+      items: [
+        { nombre: "Impresoras termicas (POS-80, ESC/POS)", detalle: "Impresion directa de ticket, factura POS y cierre de caja desde el navegador.", estado: "parcial", docs: "El POS ya genera factura; falta el driver de impresion ESC/POS via WebUSB o Web Bluetooth." },
+        { nombre: "Lectores de codigo de barras", detalle: "Entrada por teclado (wedge) ya soportada en el campo de busqueda del POS.", estado: "operativo", docs: "Conecta cualquier lector USB en modo HID y escanea directamente en el campo Buscar." },
+        { nombre: "Basculas y balanzas electronicas", detalle: "Captura de peso desde puerto serial o USB para productos de venta por peso.", estado: "pendiente", docs: "Requiere Web Serial API o driver de fabricante." },
+      ],
+    },
+    {
+      grupo: "APIs y automatizacion",
+      icon: Puzzle,
+      items: [
+        { nombre: "API REST Lunaris", detalle: "Endpoints publicos para terceros: consulta de factura por CUFE, estado de cartera, notificacion de pago.", estado: "pendiente", docs: "Ruta sugerida: /api/v1/facturas/{cufe}, /api/v1/terceros/{doc}/estado-cuenta. Autenticacion via API Key." },
+        { nombre: "Webhooks salientes", detalle: "Notifica eventos a URLs externas: factura.emitida, pago.recibido, pedido.creado, producto.stock-bajo.", estado: "pendiente", docs: "Retry exponencial, firma HMAC del payload, panel de intentos fallidos." },
+        { nombre: "Exportacion a herramientas BI", detalle: "Conexion directa a Power BI, Tableau o Looker Studio via exportacion periodica programada.", estado: "parcial", docs: "El modulo de Reportes ya exporta Excel; la automatizacion periodica esta pendiente." },
+      ],
+    },
   ];
+
+  const badgeEstado = (e) => {
+    const map = { operativo: "bg-emerald-100 text-emerald-700", parcial: "bg-amber-100 text-amber-700", pendiente: "bg-slate-200 text-slate-500" };
+    return <span className={cx("text-[10px] font-bold px-2 py-0.5 rounded-full", map[e] || map.pendiente)}>{e === "operativo" ? "Operativo" : e === "parcial" ? "Parcial" : "Pendiente"}</span>;
+  };
+
   return (
     <div className="space-y-4">
       <Breadcrumb theme={theme} items={["Lunaris", "Integraciones"]} />
-      <div><h2 className={cx("nx-display text-xl font-bold", theme.text)}>Integraciones externas</h2><p className={cx("text-sm", theme.textMuted)}>Ninguna integracion externa esta conectada en este entorno de demostracion. Todas requieren credenciales propias de tu empresa.</p></div>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {items.map((it) => (
-          <div key={it.nombre} className={cx("rounded-xl border p-4", theme.surface, theme.border)}>
-            <div className="flex items-center gap-2 mb-2"><div className={cx("h-9 w-9 rounded-lg grid place-items-center", theme.surfaceAlt)}><it.icon size={16} style={{ color: BRAND.navy }} /></div><p className={cx("text-sm font-semibold", theme.text)}>{it.nombre}</p></div>
-            <p className={cx("text-xs mb-3", theme.textMuted)}>{it.detalle}</p>
-            <Btn theme={theme} variant="secondary" size="sm" disabled className="w-full">No conectado</Btn>
+      <div><h2 className={cx("nx-display text-xl font-bold", theme.text)}>Catalogo de integraciones</h2><p className={cx("text-sm", theme.textMuted)}>Conectores disponibles, en desarrollo y planeados. Los marcados como Operativo ya funcionan en el entorno actual.</p></div>
+
+      {catalogos.map((g) => (
+        <Panel key={g.grupo} theme={theme} title={g.grupo} subtitle={`${g.items.length} integracion(es)`}>
+          <div className="space-y-2.5">
+            {g.items.map((it) => (
+              <div key={it.nombre} className={cx("rounded-lg border p-3 flex items-start gap-3", theme.border)}>
+                <div className={cx("h-9 w-9 rounded-lg grid place-items-center shrink-0", theme.surfaceAlt)}><g.icon size={16} style={{ color: it.estado === "operativo" ? BRAND.gold : undefined }} /></div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <p className={cx("text-sm font-semibold", theme.text)}>{it.nombre}</p>
+                    {badgeEstado(it.estado)}
+                  </div>
+                  <p className={cx("text-xs", theme.textMuted)}>{it.detalle}</p>
+                  <p className={cx("text-[10px] mt-1.5", theme.textFaint)}>{it.docs}</p>
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
+        </Panel>
+      ))}
+
+      <div className={cx("rounded-lg p-4 text-xs text-center", theme.surfaceAlt, theme.textMuted)}>
+        Todas las integraciones marcadas como Pendiente requieren credenciales reales de produccion de cada proveedor externo. Lunaris no almacena ni transmite datos sin que el administrador configure explicitamente cada conector.
       </div>
     </div>
   );
