@@ -17,6 +17,8 @@ import {
 } from "recharts";
 import * as XLSX from "xlsx";
 import { api } from "./api.js";
+import { useAuth } from "./contexts/AuthContext.jsx";
+import Login from "./components/Login.jsx";
 import appleTouchIcon from "../apple-touch-icon.png";
 
 /* ============================================================================
@@ -1118,7 +1120,7 @@ function Sidebar({ current, setCurrent, collapsed, setCollapsed, role, mobileOpe
   );
 }
 
-function Topbar({ theme, dark, setDark, role, setRole, sede, setSede, setMobileOpen, collapsed, setCollapsed, notifications, onSearch, searchQuery, actor }) {
+function Topbar({ theme, dark, setDark, role, user, logout, sede, setSede, setMobileOpen, collapsed, setCollapsed, notifications, onSearch, searchQuery, actor }) {
   const [showNotif, setShowNotif] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   return (
@@ -1169,17 +1171,16 @@ function Topbar({ theme, dark, setDark, role, setRole, sede, setSede, setMobileO
             <ChevronsUpDown size={13} className={theme.textFaint} />
           </button>
           {showProfile && (
-            <div className={cx("absolute right-0 mt-2 w-72 rounded-xl border shadow-2xl nx-fade overflow-hidden", theme.surface, theme.border)}>
+            <div className={cx("absolute right-0 mt-2 w-56 rounded-xl border shadow-2xl nx-fade overflow-hidden", theme.surface, theme.border)}>
               <div className={cx("px-4 py-3 border-b", theme.border)}>
-                <p className={cx("text-xs font-semibold", theme.textMuted)}>Simular sesion con rol</p>
+                <p className={cx("text-xs font-semibold", theme.text)}>{user?.nombre || user?.email}</p>
+                <p className={cx("text-[11px]", theme.textMuted)}>{user?.email}</p>
+                <p className={cx("text-[11px] mt-0.5", theme.textMuted)}>Rol: {ROLES.find((r) => r.id === role)?.nombre}</p>
               </div>
-              <div className="max-h-72 overflow-y-auto nx-scroll">
-                {ROLES.map((r) => (
-                  <button key={r.id} onClick={() => { setRole(r.id); setShowProfile(false); }} className={cx("w-full text-left px-4 py-2 text-xs flex items-start gap-2", role === r.id ? "bg-amber-500/10" : theme.hover)}>
-                    <div className="mt-0.5">{role === r.id ? <CheckCircle2 size={13} className="text-amber-500" /> : <span className="block h-3 w-3 rounded-full border border-current opacity-30" />}</div>
-                    <div><p className={cx("font-semibold", theme.text)}>{r.nombre}</p><p className={theme.textMuted}>{r.desc}</p></div>
-                  </button>
-                ))}
+              <div className="p-2">
+                <button onClick={() => { setShowProfile(false); logout(); }} className="w-full text-left px-3 py-2 text-xs rounded-lg text-red-500 hover:bg-red-500/10 transition-colors">
+                  Cerrar sesion
+                </button>
               </div>
             </div>
           )}
@@ -3121,7 +3122,7 @@ function ConfiguracionPage({ data, dispatch, actor, theme, role, onResetDemo }) 
         </div>
       )}
       {tab === "roles" && (
-        <Panel theme={theme} title="Roles del sistema" subtitle="Permisos configurables por modulo y accion (simulados via seleccion de rol en la barra superior).">
+        <Panel theme={theme} title="Roles del sistema" subtitle="Permisos configurables por modulo y accion. Los roles se asignan a cada usuario autenticado.">
           <div className="grid sm:grid-cols-2 gap-2.5">
             {ROLES.map((r) => (
               <div key={r.id} className={cx("rounded-lg p-3 flex items-start gap-2.5", theme.surfaceAlt, role === r.id && "ring-2 ring-amber-500")}>
@@ -3175,10 +3176,10 @@ function ConfiguracionPage({ data, dispatch, actor, theme, role, onResetDemo }) 
    ============================================================================ */
 
 export default function App() {
+  const { isAuthenticated, role, actor, logout, user } = useAuth();
   const [dbReady, setDbReady] = useState(false);
   const [state, setState] = useState({ data: SEED, lastResult: null });
   const [dark, setDark] = useState(false);
-  const [role, setRole] = useState("admin_empresa");
   const [sedeActiva, setSedeActiva] = useState(SEDES[0].id);
   const [currentModule, setCurrentModule] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
@@ -3209,21 +3210,19 @@ export default function App() {
   }, []);
 
   const theme = useMemo(() => themeOf(dark), [dark]);
-  const actor = useMemo(() => ({ usuario: "Usuario Demo Lunaris", rol: role }), [role]);
   const data = state.data;
 
   const dispatch = (action) => {
-    const act = { ...action, actor: action.actor || actor };
     return new Promise(async (resolve, reject) => {
       try {
-        if (act.type === "RESET_DEMO") {
+        if (action.type === "RESET_DEMO") {
           const seed = buildSeed();
           await api.saveEstado(seed);
           setState((prev) => ({ data: seed, lastResult: { ok: true, ts: Date.now() } }));
           resolve({});
           return;
         }
-        const res = await api.accion(act.type, act.payload, act.actor);
+        const res = await api.accion(action.type, action.payload);
         if (!res.ok) throw new Error(res.error);
         const newData = await api.getEstado();
         setState((prev) => ({ data: newData, lastResult: { ok: true, result: res.result, ts: Date.now() } }));
@@ -3263,6 +3262,8 @@ export default function App() {
 
   if (printPayload) return <FacturaImprimible factura={printPayload.factura} tercero={printPayload.tercero} sede={printPayload.sede} onClose={() => setPrintPayload(null)} />;
 
+  if (!isAuthenticated) return <Login />;
+
   const pageProps = { data, dispatch, actor, theme, role, sedeActiva, goTo, setPrint: setPrintPayload };
   let content = null;
   if (!puedeVer(role, currentModule)) content = <EmptyState theme={theme} title="Sin acceso" hint="El rol seleccionado no tiene acceso a este modulo." />;
@@ -3282,7 +3283,7 @@ export default function App() {
     case "auditoria": content = <AuditoriaPage {...pageProps} />; break;
     case "movil": content = <MovilPage {...pageProps} />; break;
     case "integraciones": content = <IntegracionesPage {...pageProps} />; break;
-    case "configuracion": content = <ConfiguracionPage {...pageProps} onResetDemo={() => dispatch({ type: "RESET_DEMO", payload: {}, actor })} />; break;
+    case "configuracion": content = <ConfiguracionPage {...pageProps} onResetDemo={() => dispatch({ type: "RESET_DEMO", payload: {} })} />; break;
     default: content = <DashboardPage {...pageProps} />;
   }
 
@@ -3291,7 +3292,7 @@ export default function App() {
       <style>{FONT_IMPORT}</style>
       <Sidebar current={currentModule} setCurrent={setCurrentModule} collapsed={collapsed} setCollapsed={setCollapsed} role={role} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
-        <Topbar theme={theme} dark={dark} setDark={setDark} role={role} setRole={setRole} sede={sedeActiva} setSede={setSedeActiva} setMobileOpen={setMobileOpen} collapsed={collapsed} setCollapsed={setCollapsed} notifications={notifications} onSearch={setSearchQuery} searchQuery={searchQuery} actor={actor} />
+        <Topbar theme={theme} dark={dark} setDark={setDark} role={role} user={user} logout={logout} sede={sedeActiva} setSede={setSedeActiva} setMobileOpen={setMobileOpen} collapsed={collapsed} setCollapsed={setCollapsed} notifications={notifications} onSearch={setSearchQuery} searchQuery={searchQuery} actor={actor} />
         <main className="flex-1 overflow-y-auto nx-scroll p-4 sm:p-6">
           <div className="max-w-[1400px] mx-auto nx-fade">{content}</div>
         </main>

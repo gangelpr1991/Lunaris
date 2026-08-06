@@ -16,7 +16,7 @@ function nextConsecutivo(draftDB, key, prefix) {
 }
 
 function pushAudit(actor, accion, detalle) {
-  db.prepare("INSERT INTO audit_log (id, fecha, usuario, rol, accion, detalle) VALUES (?,?,?,?,?,?)")
+  db.prepare("INSERT INTO auditLog (id, fecha, usuario, rol, accion, detalle) VALUES (?,?,?,?,?,?)")
     .run(nid("aud"), todayISO(), actor?.usuario || "API", actor?.rol || "-", accion, detalle);
 }
 
@@ -33,11 +33,11 @@ function crearComprobanteSQL({ tipo, fecha, origen, lineas, glosa }) {
 function moverInventarioSQL({ productoId, bodegaId, cantidad, tipo, origen, fecha, costoUnitario }) {
   const prod = db.prepare("SELECT * FROM productos WHERE id = ?").get(productoId);
   if (!prod) return;
-  const stockRow = db.prepare("SELECT cantidad FROM producto_stock WHERE productoId = ? AND bodegaId = ?").get(productoId, bodegaId);
+  const stockRow = db.prepare("SELECT cantidad FROM productoStock WHERE productoId = ? AND bodegaId = ?").get(productoId, bodegaId);
   const stockAntes = stockRow?.cantidad || 0;
   if (tipo === "entrada") {
     if (costoUnitario != null && costoUnitario >= 0) {
-      const stocks = db.prepare("SELECT SUM(cantidad) as total FROM producto_stock WHERE productoId = ?").get(productoId);
+      const stocks = db.prepare("SELECT SUM(cantidad) as total FROM productoStock WHERE productoId = ?").get(productoId);
       const totalAntes = stocks?.total || 0;
       const valorAntes = totalAntes * (prod.costoPromedio || 0);
       const valorEntrada = cantidad * costoUnitario;
@@ -45,14 +45,14 @@ function moverInventarioSQL({ productoId, bodegaId, cantidad, tipo, origen, fech
       const nuevoCosto = nuevoTotal > 0 ? (valorAntes + valorEntrada) / nuevoTotal : costoUnitario;
       db.prepare("UPDATE productos SET costoPromedio = ? WHERE id = ?").run(nuevoCosto, productoId);
     }
-    db.prepare("INSERT INTO producto_stock (productoId, bodegaId, cantidad) VALUES (?,?,?) ON CONFLICT(productoId,bodegaId) DO UPDATE SET cantidad = cantidad + ?")
+    db.prepare("INSERT INTO productoStock (productoId, bodegaId, cantidad) VALUES (?,?,?) ON CONFLICT(productoId,bodegaId) DO UPDATE SET cantidad = cantidad + ?")
       .run(productoId, bodegaId, cantidad, cantidad);
   } else {
-    db.prepare("INSERT INTO producto_stock (productoId, bodegaId, cantidad) VALUES (?,?,0) ON CONFLICT(productoId,bodegaId) DO UPDATE SET cantidad = MAX(0, cantidad - ?)")
+    db.prepare("INSERT INTO productoStock (productoId, bodegaId, cantidad) VALUES (?,?,0) ON CONFLICT(productoId,bodegaId) DO UPDATE SET cantidad = MAX(0, cantidad - ?)")
       .run(productoId, bodegaId, cantidad);
   }
-  const saldo = (db.prepare("SELECT cantidad FROM producto_stock WHERE productoId = ? AND bodegaId = ?").get(productoId, bodegaId)?.cantidad) || 0;
-  db.prepare("INSERT INTO movimientos_inventario (id, productoId, bodegaId, cantidad, tipo, origen, fecha, saldoResultante) VALUES (?,?,?,?,?,?,?,?)")
+  const saldo = (db.prepare("SELECT cantidad FROM productoStock WHERE productoId = ? AND bodegaId = ?").get(productoId, bodegaId)?.cantidad) || 0;
+  db.prepare("INSERT INTO movimientosInventario (id, productoId, bodegaId, cantidad, tipo, origen, fecha, saldoResultante) VALUES (?,?,?,?,?,?,?,?)")
     .run(nid("mov"), productoId, bodegaId, cantidad, tipo, origen, fecha, saldo);
 }
 
@@ -135,7 +135,7 @@ export function generarRemision(actor, { pedidoId, bodegaId }) {
     if (!ped || ped.estado === "remisionado") return { error: "El pedido no existe o ya fue remisionado." };
     const items = JSON.parse(ped.items || "[]");
     for (const it of items) {
-      const stock = db.prepare("SELECT cantidad FROM producto_stock WHERE productoId = ? AND bodegaId = ?").get(it.productoId, bodegaId);
+      const stock = db.prepare("SELECT cantidad FROM productoStock WHERE productoId = ? AND bodegaId = ?").get(it.productoId, bodegaId);
       const disponible = stock?.cantidad || 0;
       const prod = db.prepare("SELECT nombre FROM productos WHERE id = ?").get(it.productoId);
       if (prod && (prod.categoria || "") !== "Servicios" && disponible < it.cantidad) {
@@ -219,9 +219,9 @@ export function registrarRecibo(actor, { facturaId, monto, medioPago, cajaBancoI
     const nuevoEstado = nuevoSaldo <= 0 ? "pagada" : "parcial";
     db.prepare("UPDATE facturas SET saldo = ?, estado = ?, pagos = ? WHERE id = ?").run(nuevoSaldo, nuevoEstado, JSON.stringify(pagos), facturaId);
     db.prepare("UPDATE terceros SET saldoCartera = MAX(0, saldoCartera - ?) WHERE id = ?").run(monto, fac.terceroId);
-    const cb = db.prepare("SELECT * FROM cajas_bancos WHERE id = ?").get(cajaBancoId);
-    if (cb) db.prepare("UPDATE cajas_bancos SET saldo = saldo + ? WHERE id = ?").run(monto, cajaBancoId);
-    db.prepare("INSERT INTO movimientos_tesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES (?,?,?,?,?,?)")
+    const cb = db.prepare("SELECT * FROM cajasBancos WHERE id = ?").get(cajaBancoId);
+    if (cb) db.prepare("UPDATE cajasBancos SET saldo = saldo + ? WHERE id = ?").run(monto, cajaBancoId);
+    db.prepare("INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES (?,?,?,?,?,?)")
       .run(nid("mvt"), cajaBancoId, "ingreso", `Recibo de caja ${numero} - Factura ${fac.numero}`, monto, f);
     const tercero = db.prepare("SELECT nombre FROM terceros WHERE id = ?").get(fac.terceroId);
     crearComprobanteSQL({ tipo: "Recibo de caja", fecha: f, origen: { tipo: "recibo", id: recibo.id, numero },
@@ -273,7 +273,7 @@ export function crearOrdenCompra(actor, { proveedorId, sedeId, bodegaId, items }
       return { ...i, nombre: prod?.nombre, codigo: prod?.codigo };
     });
     const total = itemsEnq.reduce((s, i) => s + i.cantidad * i.costoUnitario, 0);
-    db.prepare("INSERT INTO ordenes_compra (id,numero,proveedorId,sedeId,bodegaId,fecha,total,estado,recibidoItems,items) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    db.prepare("INSERT INTO ordenesCompra (id,numero,proveedorId,sedeId,bodegaId,fecha,total,estado,recibidoItems,items) VALUES (?,?,?,?,?,?,?,?,?,?)")
       .run(id, numero, proveedorId, sedeId, bodegaId, fecha, total, "pendiente", "{}", JSON.stringify(itemsEnq));
     pushAudit(actor, "Crear orden de compra", `${numero} por ${fmtCOP(total)}`);
     return { id, numero, proveedorId, sedeId, bodegaId, fecha, items: itemsEnq, total, estado: "pendiente", recibidoItems: {} };
@@ -283,7 +283,7 @@ export function crearOrdenCompra(actor, { proveedorId, sedeId, bodegaId, items }
 
 export function recibirOrdenCompra(actor, { ocId, items: itemsRecibidos }) {
   const tx = db.transaction(() => {
-    const oc = db.prepare("SELECT * FROM ordenes_compra WHERE id = ?").get(ocId);
+    const oc = db.prepare("SELECT * FROM ordenesCompra WHERE id = ?").get(ocId);
     if (!oc) return { error: "Orden de compra no encontrada." };
     const fecha = todayISO();
     const numero = nextConsecutivo(null, "recepcion", "REC");
@@ -297,7 +297,7 @@ export function recibirOrdenCompra(actor, { ocId, items: itemsRecibidos }) {
     const totalPedido = itemsOC.reduce((s, i) => s + i.cantidad, 0);
     const totalRecibido = Object.values(recibidoItems).reduce((s, v) => s + v, 0);
     const nuevoEstado = totalRecibido >= totalPedido ? "recibida" : "recibida_parcial";
-    db.prepare("UPDATE ordenes_compra SET estado = ?, recibidoItems = ? WHERE id = ?").run(nuevoEstado, JSON.stringify(recibidoItems), ocId);
+    db.prepare("UPDATE ordenesCompra SET estado = ?, recibidoItems = ? WHERE id = ?").run(nuevoEstado, JSON.stringify(recibidoItems), ocId);
     const itemsEnq = itemsRecibidos.map((it) => {
       const itemOC = itemsOC.find((x) => x.productoId === it.productoId);
       return { ...it, nombre: itemOC?.nombre, codigo: itemOC?.codigo };
@@ -314,9 +314,9 @@ export function generarFacturaCompra(actor, { recepcionId }) {
   const tx = db.transaction(() => {
     const rcp = db.prepare("SELECT * FROM recepciones WHERE id = ?").get(recepcionId);
     if (!rcp) return { error: "Recepcion no encontrada." };
-    const ya = db.prepare("SELECT id FROM facturas_compra WHERE recepcionId = ?").get(recepcionId);
+    const ya = db.prepare("SELECT id FROM facturasCompra WHERE recepcionId = ?").get(recepcionId);
     if (ya) return { error: "Esta recepcion ya tiene una factura de compra asociada." };
-    const oc = db.prepare("SELECT * FROM ordenes_compra WHERE id = ?").get(rcp.ocId);
+    const oc = db.prepare("SELECT * FROM ordenesCompra WHERE id = ?").get(rcp.ocId);
     const prov = db.prepare("SELECT * FROM terceros WHERE id = ?").get(oc.proveedorId);
     const itemsRcp = JSON.parse(rcp.items || "[]");
     const itemsOC = JSON.parse(oc.items || "[]");
@@ -327,7 +327,7 @@ export function generarFacturaCompra(actor, { recepcionId }) {
     const iva = Math.round(subtotal * 0.19);
     const total = subtotal + iva;
     const vencimiento = addDays(fecha, prov.condicionPagoDias || 30).slice(0, 10);
-    db.prepare("INSERT INTO facturas_compra (id,numero,recepcionId,ocId,proveedorId,fecha,vencimiento,subtotal,iva,total,saldo,estado,items) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    db.prepare("INSERT INTO facturasCompra (id,numero,recepcionId,ocId,proveedorId,fecha,vencimiento,subtotal,iva,total,saldo,estado,items) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(id, numero, recepcionId, oc.id, oc.proveedorId, fecha, vencimiento, subtotal, iva, total, total, "pendiente", JSON.stringify(itemsRcp));
     db.prepare("UPDATE terceros SET saldoCxP = saldoCxP + ? WHERE id = ?").run(total, oc.proveedorId);
     crearComprobanteSQL({ tipo: "Factura de compra", fecha, origen: { tipo: "facturaCompra", id, numero },
@@ -346,7 +346,7 @@ export function generarFacturaCompra(actor, { recepcionId }) {
 
 export function pagarFacturaCompra(actor, { facturaCompraId, monto, cajaBancoId, fecha }) {
   const tx = db.transaction(() => {
-    const fc = db.prepare("SELECT * FROM facturas_compra WHERE id = ?").get(facturaCompraId);
+    const fc = db.prepare("SELECT * FROM facturasCompra WHERE id = ?").get(facturaCompraId);
     if (!fc) return { error: "Factura de compra no encontrada." };
     if (!(monto > 0)) return { error: "El monto debe ser mayor a cero." };
     if (monto > fc.saldo + 0.5) return { error: `El monto supera el saldo pendiente (${fmtCOP(fc.saldo)}).` };
@@ -354,11 +354,11 @@ export function pagarFacturaCompra(actor, { facturaCompraId, monto, cajaBancoId,
     const numero = nextConsecutivo(null, "egreso", "CE");
     const nuevoSaldo = Math.round((fc.saldo - monto) * 100) / 100;
     const nuevoEstado = nuevoSaldo <= 0 ? "pagada" : "parcial";
-    db.prepare("UPDATE facturas_compra SET saldo = ?, estado = ? WHERE id = ?").run(nuevoSaldo, nuevoEstado, facturaCompraId);
+    db.prepare("UPDATE facturasCompra SET saldo = ?, estado = ? WHERE id = ?").run(nuevoSaldo, nuevoEstado, facturaCompraId);
     db.prepare("UPDATE terceros SET saldoCxP = MAX(0, saldoCxP - ?) WHERE id = ?").run(monto, fc.proveedorId);
-    const cb = db.prepare("SELECT * FROM cajas_bancos WHERE id = ?").get(cajaBancoId);
-    if (cb) db.prepare("UPDATE cajas_bancos SET saldo = saldo - ? WHERE id = ?").run(monto, cajaBancoId);
-    db.prepare("INSERT INTO movimientos_tesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES (?,?,?,?,?,?)")
+    const cb = db.prepare("SELECT * FROM cajasBancos WHERE id = ?").get(cajaBancoId);
+    if (cb) db.prepare("UPDATE cajasBancos SET saldo = saldo - ? WHERE id = ?").run(monto, cajaBancoId);
+    db.prepare("INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES (?,?,?,?,?,?)")
       .run(nid("mvt"), cajaBancoId, "egreso", `Comprobante de egreso ${numero} - Factura compra ${fc.numero}`, monto, f);
     const prov = db.prepare("SELECT nombre FROM terceros WHERE id = ?").get(fc.proveedorId);
     crearComprobanteSQL({ tipo: "Comprobante de egreso", fecha: f, origen: { tipo: "egreso", id: numero, numero },
@@ -378,7 +378,7 @@ export function pagarFacturaCompra(actor, { facturaCompraId, monto, cajaBancoId,
 
 export function ajusteInventario(actor, { productoId, bodegaId, cantidad, tipo, motivo }) {
   const tx = db.transaction(() => {
-    const stock = db.prepare("SELECT cantidad FROM producto_stock WHERE productoId = ? AND bodegaId = ?").get(productoId, bodegaId);
+    const stock = db.prepare("SELECT cantidad FROM productoStock WHERE productoId = ? AND bodegaId = ?").get(productoId, bodegaId);
     if (tipo === "salida" && (stock?.cantidad || 0) < cantidad) return { error: "El ajuste de salida supera el stock disponible." };
     moverInventarioSQL({ productoId, bodegaId, cantidad: Math.abs(cantidad), tipo, origen: `Ajuste manual (${motivo})`, fecha: todayISO() });
     const prod = db.prepare("SELECT nombre FROM productos WHERE id = ?").get(productoId);
@@ -391,7 +391,7 @@ export function ajusteInventario(actor, { productoId, bodegaId, cantidad, tipo, 
 export function transferenciaInventario(actor, { productoId, origenBodegaId, destinoBodegaId, cantidad }) {
   const tx = db.transaction(() => {
     if (origenBodegaId === destinoBodegaId) return { error: "La bodega de origen y destino deben ser diferentes." };
-    const stock = db.prepare("SELECT cantidad FROM producto_stock WHERE productoId = ? AND bodegaId = ?").get(productoId, origenBodegaId);
+    const stock = db.prepare("SELECT cantidad FROM productoStock WHERE productoId = ? AND bodegaId = ?").get(productoId, origenBodegaId);
     if ((stock?.cantidad || 0) < cantidad) return { error: "Stock insuficiente en la bodega de origen." };
     const fecha = todayISO();
     moverInventarioSQL({ productoId, bodegaId: origenBodegaId, cantidad, tipo: "salida", origen: `Transferencia a ${destinoBodegaId}`, fecha });
@@ -406,16 +406,16 @@ export function transferenciaInventario(actor, { productoId, origenBodegaId, des
 export function registrarMovimientoTesoreriaManual(actor, { cajaBancoId, tipo, concepto, monto, cuentaContrapartida }) {
   const tx = db.transaction(() => {
     if (!(monto > 0)) return { error: "El monto debe ser mayor a cero." };
-    const cb = db.prepare("SELECT * FROM cajas_bancos WHERE id = ?").get(cajaBancoId);
+    const cb = db.prepare("SELECT * FROM cajasBancos WHERE id = ?").get(cajaBancoId);
     if (!cb) return { error: "Caja o banco no encontrado." };
     if (tipo === "egreso" && cb.saldo < monto) return { error: "Saldo insuficiente en la caja/banco seleccionado." };
     const fecha = todayISO();
     const numero = nextConsecutivo(null, tipo === "ingreso" ? "reciboCaja" : "egreso", tipo === "ingreso" ? "RC" : "CE");
-    db.prepare("UPDATE cajas_bancos SET saldo = saldo + ? WHERE id = ?").run(tipo === "ingreso" ? monto : -monto, cajaBancoId);
-    db.prepare("INSERT INTO movimientos_tesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES (?,?,?,?,?,?)")
+    db.prepare("UPDATE cajasBancos SET saldo = saldo + ? WHERE id = ?").run(tipo === "ingreso" ? monto : -monto, cajaBancoId);
+    db.prepare("INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES (?,?,?,?,?,?)")
       .run(nid("mvt"), cajaBancoId, tipo, `${numero} — ${concepto}`, monto, fecha);
     const cuentaCaja = cb.tipo === "caja" ? "1105" : "1110";
-    const c = db.prepare("SELECT nombre FROM plan_cuentas WHERE codigo = ?").get(cuentaContrapartida);
+    const c = db.prepare("SELECT nombre FROM planCuentas WHERE codigo = ?").get(cuentaContrapartida);
     const lineas = tipo === "ingreso"
       ? [{ cuenta: cuentaCaja, nombre: cuentaCaja === "1105" ? "Caja general" : "Bancos - Cta corriente", tercero: "-", debito: monto, credito: 0 }, { cuenta: cuentaContrapartida, nombre: c?.nombre || cuentaContrapartida, tercero: "-", debito: 0, credito: monto }]
       : [{ cuenta: cuentaContrapartida, nombre: c?.nombre || cuentaContrapartida, tercero: "-", debito: monto, credito: 0 }, { cuenta: cuentaCaja, nombre: cuentaCaja === "1105" ? "Caja general" : "Bancos - Cta corriente", tercero: "-", debito: 0, credito: monto }];
@@ -429,17 +429,17 @@ export function registrarMovimientoTesoreriaManual(actor, { cajaBancoId, tipo, c
 export function transferenciaTesoreria(actor, { origenId, destinoId, monto }) {
   const tx = db.transaction(() => {
     if (origenId === destinoId) return { error: "Selecciona cuentas de origen y destino diferentes." };
-    const origen = db.prepare("SELECT * FROM cajas_bancos WHERE id = ?").get(origenId);
-    const destino = db.prepare("SELECT * FROM cajas_bancos WHERE id = ?").get(destinoId);
+    const origen = db.prepare("SELECT * FROM cajasBancos WHERE id = ?").get(origenId);
+    const destino = db.prepare("SELECT * FROM cajasBancos WHERE id = ?").get(destinoId);
     if (!origen || !destino) return { error: "Cuenta no encontrada." };
     if (!(monto > 0)) return { error: "El monto debe ser mayor a cero." };
     if (origen.saldo < monto) return { error: "Saldo insuficiente en la cuenta de origen." };
     const fecha = todayISO();
-    db.prepare("UPDATE cajas_bancos SET saldo = saldo - ? WHERE id = ?").run(monto, origenId);
-    db.prepare("UPDATE cajas_bancos SET saldo = saldo + ? WHERE id = ?").run(monto, destinoId);
-    db.prepare("INSERT INTO movimientos_tesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES (?,?,?,?,?,?)")
+    db.prepare("UPDATE cajasBancos SET saldo = saldo - ? WHERE id = ?").run(monto, origenId);
+    db.prepare("UPDATE cajasBancos SET saldo = saldo + ? WHERE id = ?").run(monto, destinoId);
+    db.prepare("INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES (?,?,?,?,?,?)")
       .run(nid("mvt"), origenId, "egreso", `Transferencia a ${destino.nombre}`, monto, fecha);
-    db.prepare("INSERT INTO movimientos_tesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES (?,?,?,?,?,?)")
+    db.prepare("INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES (?,?,?,?,?,?)")
       .run(nid("mvt"), destinoId, "ingreso", `Transferencia desde ${origen.nombre}`, monto, fecha);
     crearComprobanteSQL({ tipo: "Transferencia entre cuentas", fecha, origen: { tipo: "transferencia" }, glosa: `Transferencia de ${origen.nombre} a ${destino.nombre}`,
       lineas: [{ cuenta: destino.tipo === "caja" ? "1105" : "1110", nombre: destino.tipo === "caja" ? "Caja general" : "Bancos - Cta corriente", tercero: "-", debito: monto, credito: 0 }, { cuenta: origen.tipo === "caja" ? "1105" : "1110", nombre: origen.tipo === "caja" ? "Caja general" : "Bancos - Cta corriente", tercero: "-", debito: 0, credito: monto }],
@@ -495,7 +495,7 @@ export function liquidarNomina(actor, { periodo, empleadoIds }) {
           { cuenta: "2505", nombre: "Salarios y prestaciones por pagar", tercero: emp.nombre, debito: 0, credito: ded + aportes },
         ],
       });
-      db.prepare("UPDATE cajas_bancos SET saldo = saldo - ? WHERE tipo = 'banco' AND id = (SELECT id FROM cajas_bancos WHERE tipo = 'banco' LIMIT 1)").run(neto);
+      db.prepare("UPDATE cajasBancos SET saldo = saldo - ? WHERE tipo = 'banco' AND id = (SELECT id FROM cajasBancos WHERE tipo = 'banco' LIMIT 1)").run(neto);
     }
     pushAudit(actor, "Liquidar nomina", `Periodo ${periodo} — ${nominasGen.length} empleado(s)`);
     return { nominas: nominasGen };

@@ -9,18 +9,18 @@ CREATE TABLE IF NOT EXISTS sedes (
 );
 
 CREATE TABLE IF NOT EXISTS bodegas (
-  id TEXT PRIMARY KEY, nombre TEXT, sedeId TEXT REFERENCES sedes(id)
+  id TEXT PRIMARY KEY, nombre TEXT, sedeId TEXT
 );
 
 CREATE TABLE IF NOT EXISTS roles (
   id TEXT PRIMARY KEY, nombre TEXT, descripcion TEXT
 );
 
-CREATE TABLE IF NOT EXISTS plan_cuentas (
+CREATE TABLE IF NOT EXISTS planCuentas (
   codigo TEXT PRIMARY KEY, nombre TEXT, clase TEXT, naturaleza TEXT
 );
 
-CREATE TABLE IF NOT EXISTS cajas_bancos (
+CREATE TABLE IF NOT EXISTS cajasBancos (
   id TEXT PRIMARY KEY, tipo TEXT, nombre TEXT, sedeId TEXT, saldo REAL
 );
 
@@ -35,9 +35,9 @@ CREATE TABLE IF NOT EXISTS productos (
   precio REAL, costoPromedio REAL, iva INTEGER DEFAULT 19, tieneLote INTEGER DEFAULT 0, minimo REAL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS producto_stock (
+CREATE TABLE IF NOT EXISTS productoStock (
   productoId TEXT, bodegaId TEXT, cantidad REAL DEFAULT 0,
-  PRIMARY KEY (productoId, bodegaId), FOREIGN KEY (productoId) REFERENCES productos(id)
+  PRIMARY KEY (productoId, bodegaId)
 );
 
 CREATE TABLE IF NOT EXISTS empleados (
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS facturas (
   items TEXT, pagos TEXT
 );
 
-CREATE TABLE IF NOT EXISTS ordenes_compra (
+CREATE TABLE IF NOT EXISTS ordenesCompra (
   id TEXT PRIMARY KEY, numero TEXT, proveedorId TEXT, sedeId TEXT, bodegaId TEXT,
   fecha TEXT, total REAL, estado TEXT, recibidoItems TEXT,
   items TEXT
@@ -83,18 +83,18 @@ CREATE TABLE IF NOT EXISTS recepciones (
   id TEXT PRIMARY KEY, numero TEXT, ocId TEXT, fecha TEXT, items TEXT
 );
 
-CREATE TABLE IF NOT EXISTS facturas_compra (
+CREATE TABLE IF NOT EXISTS facturasCompra (
   id TEXT PRIMARY KEY, numero TEXT, recepcionId TEXT, ocId TEXT, proveedorId TEXT,
   fecha TEXT, vencimiento TEXT, subtotal REAL, iva REAL, total REAL, saldo REAL,
   estado TEXT, items TEXT
 );
 
-CREATE TABLE IF NOT EXISTS movimientos_inventario (
+CREATE TABLE IF NOT EXISTS movimientosInventario (
   id TEXT PRIMARY KEY, productoId TEXT, bodegaId TEXT, cantidad REAL,
   tipo TEXT, origen TEXT, fecha TEXT, saldoResultante REAL
 );
 
-CREATE TABLE IF NOT EXISTS movimientos_tesoreria (
+CREATE TABLE IF NOT EXISTS movimientosTesoreria (
   id TEXT PRIMARY KEY, cajaBancoId TEXT, tipo TEXT, concepto TEXT, monto REAL, fecha TEXT
 );
 
@@ -112,7 +112,13 @@ CREATE TABLE IF NOT EXISTS nominas (
   prestaciones TEXT, prestacionesTotal REAL, costoTotalEmpresa REAL
 );
 
-CREATE TABLE IF NOT EXISTS audit_log (
+CREATE TABLE IF NOT EXISTS auditLog (
   id TEXT PRIMARY KEY, fecha TEXT, usuario TEXT, rol TEXT, accion TEXT, detalle TEXT
+);
+
+CREATE TABLE IF NOT EXISTS usuarios (
+  id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+  nombre TEXT NOT NULL, rol TEXT NOT NULL DEFAULT 'consulta',
+  activo INTEGER DEFAULT 1, created_at TEXT
 );
 `;

@@ -37,10 +37,11 @@ const TABLES = {
   comprobantes: { pk: "id", jsonCols: ["lineas", "origen"] },
   nominas: { pk: "id", jsonCols: ["deducciones", "aportesPatronales", "prestaciones"] },
   auditLog: { pk: "id" },
+  usuarios: { pk: "id" },
 };
 
 const CONSECUTIVOS_TABLE = "consecutivos";
-const STOCK_TABLE = "producto_stock";
+const STOCK_TABLE = "productoStock";
 
 function mapRow(row, tableConfig) {
   if (!row) return null;
@@ -93,6 +94,7 @@ export function saveFullState(data) {
       "terceros", "productos", "empleados",
       "cajasBancos", "bodegas", "sedes",
       "roles", "planCuentas", "empresa",
+      "usuarios",
     ];
 
     for (const table of orderedTables) {
