@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useReducer, useRef, useEffect } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   LayoutDashboard, Users, ShoppingCart, Receipt, Boxes, Landmark,
   Wallet, Calculator, FileBarChart, Smartphone, Settings, Puzzle,
@@ -3176,26 +3176,7 @@ function ConfiguracionPage({ data, dispatch, actor, theme, role, onResetDemo }) 
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
-  const [dbData, setDbData] = useState(null);
-  const firstSave = useRef(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    api.getEstado()
-      .then((data) => {
-        if (cancelled) return;
-        if (data && (data.terceros || data.productos)) {
-          setDbData(data);
-        }
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setDbReady(true); });
-    return () => { cancelled = true; };
-  }, []);
-
-  const initialState = useMemo(() => dbData || SEED, [dbData]);
-
-  const [state, dispatchRaw] = useReducer(reducer, undefined, () => ({ data: initialState, lastResult: null }));
+  const [state, setState] = useState({ data: SEED, lastResult: null });
   const [dark, setDark] = useState(false);
   const [role, setRole] = useState("admin_empresa");
   const [sedeActiva, setSedeActiva] = useState(SEDES[0].id);
@@ -3205,39 +3186,62 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [printPayload, setPrintPayload] = useState(null);
   const [toast, setToast] = useState(null);
-  const pendingDispatch = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getEstado()
+      .then((data) => {
+        if (cancelled) return;
+        if (data && (data.terceros || data.productos)) {
+          setState({ data, lastResult: null });
+        } else {
+          const seed = buildSeed();
+          api.saveEstado(seed).then(() => {
+            if (!cancelled) setState({ data: seed, lastResult: null });
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setState({ data: SEED, lastResult: null });
+      })
+      .finally(() => { if (!cancelled) setDbReady(true); });
+    return () => { cancelled = true; };
+  }, []);
 
   const theme = useMemo(() => themeOf(dark), [dark]);
   const actor = useMemo(() => ({ usuario: "Usuario Demo Lunaris", rol: role }), [role]);
   const data = state.data;
 
   const dispatch = (action) => {
-    dispatchRaw({ ...action, actor: action.actor || actor });
-    return new Promise((resolve, reject) => {
-      pendingDispatch.current = { resolve, reject };
+    const act = { ...action, actor: action.actor || actor };
+    return new Promise(async (resolve, reject) => {
+      try {
+        if (act.type === "RESET_DEMO") {
+          const seed = buildSeed();
+          await api.saveEstado(seed);
+          setState((prev) => ({ data: seed, lastResult: { ok: true, ts: Date.now() } }));
+          resolve({});
+          return;
+        }
+        const res = await api.accion(act.type, act.payload, act.actor);
+        if (!res.ok) throw new Error(res.error);
+        const newData = await api.getEstado();
+        setState((prev) => ({ data: newData, lastResult: { ok: true, result: res.result, ts: Date.now() } }));
+        resolve(res.result);
+      } catch (e) {
+        setState((prev) => ({ data: prev.data, lastResult: { ok: false, error: e.message, ts: Date.now() } }));
+        reject(e);
+      }
     });
   };
 
   useEffect(() => {
     if (!state.lastResult) return;
-    if (pendingDispatch.current) {
-      const { resolve, reject } = pendingDispatch.current;
-      pendingDispatch.current = null;
-      if (state.lastResult.ok) { setToast({ ok: true, message: "Operacion realizada correctamente." }); resolve(state.lastResult.result); }
-      else { setToast({ ok: false, message: state.lastResult.error }); reject(new Error(state.lastResult.error)); }
-    } else {
-      if (state.lastResult.ok) setToast({ ok: true, message: "Operacion realizada correctamente." });
-      else setToast({ ok: false, message: state.lastResult.error });
-    }
+    if (state.lastResult.ok) setToast({ ok: true, message: "Operacion realizada correctamente." });
+    else setToast({ ok: false, message: state.lastResult.error });
     const t = setTimeout(() => setToast(null), 4200);
     return () => clearTimeout(t);
   }, [state.lastResult]);
-
-  useEffect(() => {
-    if (!dbReady) return;
-    if (firstSave.current) { firstSave.current = false; return; }
-    api.saveEstado(state.data).catch(() => {});
-  }, [state.data, dbReady]);
 
   useEffect(() => { if (!puedeVer(role, currentModule)) setCurrentModule("dashboard"); }, [role, currentModule]);
 
@@ -3252,7 +3256,7 @@ export default function App() {
           <span className="text-white font-bold text-lg nx-display">L</span>
         </div>
         <p className="nx-display font-bold text-lg" style={{ color: BRAND.navy }}>Lunaris</p>
-        <p className="text-sm text-slate-500">Conectando con la base de datos...</p>
+        <p className="text-sm text-slate-500">Conectando con el servidor...</p>
       </div>
     </div>
   );

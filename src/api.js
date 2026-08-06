@@ -17,4 +17,7 @@ export const api = {
 
   saveEstado: (data) =>
     request("/estado", { method: "PUT", body: JSON.stringify(data) }),
+
+  accion: (type, payload, actor) =>
+    request("/accion", { method: "POST", body: JSON.stringify({ type, payload, actor }) }),
 };
