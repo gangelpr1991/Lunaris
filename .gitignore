@@ -3,4 +3,6 @@ dist
 .DS_Store
 lunaris.db
 lunaris.db-*
+lunaris_v2.db
+lunaris_v2.db-*
 .env

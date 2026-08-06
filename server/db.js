@@ -4,7 +4,7 @@ import { dirname, join } from "path";
 import { SCHEMA } from "./schema.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const db = new Database(join(__dirname, "..", "lunaris.db"));
+const db = new Database(join(__dirname, "..", "lunaris_v2.db"));
 
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
