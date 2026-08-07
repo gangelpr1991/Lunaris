@@ -1,0 +1,71 @@
+{
+  "app": {
+    "name": "Lunaris",
+    "connecting": "Conectando con el servidor...",
+    "noAccess": "Sin acceso",
+    "noAccessHint": "El rol seleccionado no tiene acceso a este módulo.",
+    "operationSuccess": "Operación realizada correctamente."
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "terceros": "Terceros",
+    "ventas": "Ventas",
+    "pos": "Punto de venta",
+    "compras": "Compras",
+    "inventario": "Inventario",
+    "tesoreria": "Tesorería",
+    "cartera": "Cartera",
+    "contabilidad": "Contabilidad",
+    "nomina": "Nómina",
+    "impuestos": "Impuestos",
+    "reportes": "Reportes",
+    "auditoria": "Auditoría",
+    "movil": "Móvil",
+    "integraciones": "Integraciones",
+    "configuracion": "Configuración",
+    "menu": "Menú principal",
+    "general": "General",
+    "comercial": "Comercial",
+    "financiero": "Financiero",
+    "herramientas": "Herramientas"
+  },
+  "actions": {
+    "new": "Nuevo",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "export": "Exportar",
+    "print": "Imprimir",
+    "search": "Buscar",
+    "refresh": "Actualizar",
+    "confirm": "Confirmar",
+    "close": "Cerrar",
+    "back": "Volver",
+    "next": "Siguiente",
+    "create": "Crear",
+    "approve": "Aprobar"
+  },
+  "status": {
+    "borrador": "Borrador",
+    "aprobada": "Aprobada",
+    "convertida": "Convertida",
+    "pendiente": "Pendiente",
+    "remisionado": "Remisionado",
+    "entregada": "Entregada",
+    "pagada": "Pagada",
+    "parcial": "Pago parcial",
+    "vencida": "Vencida",
+    "anulada": "Anulada",
+    "recibida": "Recibida",
+    "recibida_parcial": "Recibida parcial",
+    "aceptado": "Aceptado DIAN",
+    "rechazado": "Rechazado DIAN",
+    "contingencia": "Contingencia",
+    "anulado": "Anulado"
+  },
+  "theme": {
+    "light": "Claro",
+    "dark": "Oscuro"
+  }
+}

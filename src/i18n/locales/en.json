@@ -1,0 +1,71 @@
+{
+  "app": {
+    "name": "Lunaris",
+    "connecting": "Connecting to server...",
+    "noAccess": "No access",
+    "noAccessHint": "The selected role does not have access to this module.",
+    "operationSuccess": "Operation completed successfully."
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "terceros": "Contacts",
+    "ventas": "Sales",
+    "pos": "Point of Sale",
+    "compras": "Purchasing",
+    "inventario": "Inventory",
+    "tesoreria": "Treasury",
+    "cartera": "Collections",
+    "contabilidad": "Accounting",
+    "nomina": "Payroll",
+    "impuestos": "Taxes",
+    "reportes": "Reports",
+    "auditoria": "Audit Trail",
+    "movil": "Mobile",
+    "integraciones": "Integrations",
+    "configuracion": "Settings",
+    "menu": "Main menu",
+    "general": "General",
+    "comercial": "Commercial",
+    "financiero": "Financial",
+    "herramientas": "Tools"
+  },
+  "actions": {
+    "new": "New",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "export": "Export",
+    "print": "Print",
+    "search": "Search",
+    "refresh": "Refresh",
+    "confirm": "Confirm",
+    "close": "Close",
+    "back": "Back",
+    "next": "Next",
+    "create": "Create",
+    "approve": "Approve"
+  },
+  "status": {
+    "borrador": "Draft",
+    "aprobada": "Approved",
+    "convertida": "Converted",
+    "pendiente": "Pending",
+    "remisionado": "Dispatched",
+    "entregada": "Delivered",
+    "pagada": "Paid",
+    "parcial": "Partial payment",
+    "vencida": "Overdue",
+    "anulada": "Voided",
+    "recibida": "Received",
+    "recibida_parcial": "Partially received",
+    "aceptado": "Accepted (DIAN)",
+    "rechazado": "Rejected (DIAN)",
+    "contingencia": "Contingency",
+    "anulado": "Voided"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark"
+  }
+}

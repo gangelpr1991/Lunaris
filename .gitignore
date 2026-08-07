@@ -6,3 +6,5 @@ lunaris.db-*
 lunaris_v2.db
 lunaris_v2.db-*
 .env
+backups/
+logs/

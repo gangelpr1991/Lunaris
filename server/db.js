@@ -2,15 +2,22 @@ import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { SCHEMA } from "./schema.js";
+import { env } from "./env.js";
+import pgPool, { initPGDB, loadFullStatePG, saveFullStatePG, closePGDB } from "./pgdb.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const db = new Database(join(__dirname, "..", "lunaris_v2.db"));
+let db;
+let usePG = env.DB_TYPE === "postgresql";
 
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
-db.exec(SCHEMA);
-
-export function initDB() {}
+export function initDB() {
+  if (usePG) {
+    return initPGDB();
+  }
+  db = new Database(join(__dirname, "..", "lunaris_v2.db"));
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  db.exec(SCHEMA);
+}
 
 function jsonCol(val) { return val ? JSON.stringify(val) : null; }
 function parseCol(val) { return val ? JSON.parse(val) : null; }
@@ -63,16 +70,15 @@ function mapRow(row, tableConfig) {
 }
 
 export function loadFullState() {
-  const state = { consecutivos: {} };
+  if (usePG) return loadFullStatePG();
 
+  const state = { consecutivos: {} };
   for (const [table, config] of Object.entries(TABLES)) {
     const rows = db.prepare(`SELECT * FROM ${table}`).all();
     state[table] = rows.map((r) => mapRow(r, config));
   }
-
   const consecutivos = db.prepare(`SELECT * FROM ${CONSECUTIVOS_TABLE}`).all();
   for (const r of consecutivos) state.consecutivos[r.tipo] = r.valor;
-
   const stockRows = db.prepare(`SELECT * FROM ${STOCK_TABLE}`).all();
   for (const p of state.productos) {
     p.stock = {};
@@ -80,11 +86,12 @@ export function loadFullState() {
       if (s.productoId === p.id) p.stock[s.bodegaId] = s.cantidad;
     }
   }
-
   return state;
 }
 
 export function saveFullState(data) {
+  if (usePG) return saveFullStatePG(data);
+
   const tx = db.transaction(() => {
     const orderedTables = [
       "nominas", "comprobantes", "auditLog",
@@ -96,7 +103,6 @@ export function saveFullState(data) {
       "roles", "planCuentas", "empresa",
       "usuarios",
     ];
-
     for (const table of orderedTables) {
       db.prepare(`DELETE FROM ${table}`).run();
     }
@@ -109,11 +115,9 @@ export function saveFullState(data) {
       const cols = Object.keys(rows[0])
         .filter((c) => !config.exclude?.includes(c))
         .map((c) => (config.colMap?.[c] ? config.colMap[c] : c));
-
       const insert = db.prepare(
         `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`
       );
-
       for (const row of rows) {
         const values = cols.map((c) => {
           const val = row[c];
@@ -148,4 +152,4 @@ export function saveFullState(data) {
   tx();
 }
 
-export default db;
+export { db as default };

@@ -1,9 +1,9 @@
-import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import swaggerUi from "swagger-ui-express";
+import { env } from "./env.js";
 import { initDB, loadFullState, saveFullState } from "./db.js";
 import * as business from "./business.js";
 import { authMiddleware, requireWriteRole, requireActionRole, generateToken, comparePassword, findUserByEmail, ensureDefaultAdmin } from "./auth.js";
@@ -11,10 +11,11 @@ import { loginSchema, validateBody } from "./validators.js";
 import { swaggerSpec } from "./swagger.js";
 import logger, { requestLogger } from "./logger.js";
 import { runMigrations } from "./migrations.js";
+import { startBackupScheduler } from "./backup.js";
 
 const app = express();
-const PORT = process.env.PORT || 3001;
-const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:5173";
+const PORT = env.PORT || 3001;
+const CORS_ORIGIN = env.CORS_ORIGIN || "http://localhost:5173";
 
 app.use(helmet());
 app.use(
@@ -46,7 +47,7 @@ const authLimiter = rateLimit({
 
 app.use("/api/", limiter);
 
-if (process.env.NODE_ENV !== "test") {
+if (env.NODE_ENV !== "test") {
   app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, { customSiteTitle: "Lunaris API Docs" }));
 }
 
@@ -241,9 +242,11 @@ app.use((err, _req, res, _next) => {
 initDB();
 runMigrations();
 ensureDefaultAdmin();
+startBackupScheduler();
 
 app.listen(PORT, () => {
   logger.info(`Lunaris API en http://localhost:${PORT}`);
+  logger.info(`Base de datos: ${env.DB_TYPE}`);
   logger.info("Logica de negocio — 20 acciones disponibles.");
   logger.info("Seguridad: Helmet + CORS + Rate Limit + JWT + Zod + RBAC.");
   logger.info(`Documentacion API: http://localhost:${PORT}/api/docs`);
