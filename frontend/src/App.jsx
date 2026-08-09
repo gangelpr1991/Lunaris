@@ -1843,7 +1843,7 @@ export default function App() {
   return (
     <div className={cx("nx-root flex h-screen w-full overflow-hidden", theme.bg)}>
       <style>{FONT_IMPORT}</style>
-      <Sidebar current={currentModule} setCurrent={goTo} collapsed={collapsed} setCollapsed={setCollapsed} role={role} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
+      <Sidebar current={currentModule} setCurrent={goTo} collapsed={collapsed} setCollapsed={setCollapsed} role={role} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} logout={logout} />
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
         <Topbar theme={theme} dark={dark} setDark={setDark} role={role} user={user} logout={logout} sede={sedeActiva} setSede={setSedeActiva} setMobileOpen={setMobileOpen} collapsed={collapsed} setCollapsed={setCollapsed} notifications={notifications} onSearch={setSearchQuery} searchQuery={searchQuery} actor={actor} />
         <main className="flex-1 overflow-y-auto nx-scroll p-4 sm:p-6">

@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Users, Receipt, Store, Wallet2, ShoppingCart,
   Boxes, Landmark, Calculator, BadgeCheck, UserCog, FileBarChart,
   History, Smartphone, Puzzle, Settings,
-  Menu, Search, Bell, Sun, Moon, HelpCircle, AlertTriangle, ChevronsUpDown
+  Menu, Search, Bell, Sun, Moon, HelpCircle, AlertTriangle, ChevronsUpDown, LogOut
 } from "lucide-react";
 import { BRAND, ESTADO_MODULO_BADGE, SEDES, ROLES, puedeVer, cx } from "../../data/constants.js";
 import appleTouchIcon from "../../../apple-touch-icon.png";
@@ -49,7 +49,7 @@ function IconBtn({ icon: Icon, onClick, theme, title, active }) {
   );
 }
 
-export function Sidebar({ current, setCurrent, collapsed, setCollapsed, role, mobileOpen, setMobileOpen }) {
+export function Sidebar({ current, setCurrent, collapsed, setCollapsed, role, mobileOpen, setMobileOpen, logout }) {
   return (
     <>
       {mobileOpen && <div className="fixed inset-0 z-40 bg-slate-950/60 lg:hidden" onClick={() => setMobileOpen(false)} />}
@@ -66,6 +66,15 @@ export function Sidebar({ current, setCurrent, collapsed, setCollapsed, role, mo
             <img src={appleTouchIcon} alt="Lunaris" className="h-7 w-7 object-contain" />
           </div>
           {!collapsed && <span className="nx-display font-bold text-white text-[15px] tracking-tight">Lunaris</span>}
+          {!collapsed && (
+            <button
+              onClick={logout}
+              title="Cerrar sesion"
+              className="ml-auto h-8 w-8 grid place-items-center rounded-lg text-white/50 hover:text-red-400 hover:bg-white/10 transition-colors"
+            >
+              <LogOut size={16} strokeWidth={2} />
+            </button>
+          )}
         </div>
         <nav className="flex-1 py-3 px-2.5 space-y-4">
           {NAV.map((g) => {

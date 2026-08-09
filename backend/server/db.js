@@ -1,4 +1,3 @@
-import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { SCHEMA } from "./schema.js";
@@ -6,21 +5,31 @@ import { env } from "./env.js";
 import pgPool, { initPGDB, loadFullStatePG, saveFullStatePG, closePGDB } from "./pgdb.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-let db;
 let usePG = env.DB_TYPE === "postgresql";
 
 export function initDB() {
   if (usePG) {
     return initPGDB();
   }
-  db = new Database(join(__dirname, "..", "lunaris_v2.db"));
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  db.exec(SCHEMA);
+  throw new Error("SQLite no está soportado. Usa DB_TYPE=postgresql en .env");
 }
 
-function jsonCol(val) { return val ? JSON.stringify(val) : null; }
-function parseCol(val) { return val ? JSON.parse(val) : null; }
+export function loadFullState() {
+  if (usePG) return loadFullStatePG();
+  throw new Error("SQLite no está soportado");
+}
+
+export function saveFullState(data) {
+  if (usePG) return saveFullStatePG(data);
+  throw new Error("SQLite no está soportado");
+}
+
+export function closeDB() {
+  if (usePG) return closePGDB();
+}
+
+export function jsonCol(val) { return val ? JSON.stringify(val) : null; }
+export function parseCol(val) { return val ? JSON.parse(val) : null; }
 
 const TABLES = {
   empresa: { pk: "id" },
@@ -28,128 +37,103 @@ const TABLES = {
   bodegas: { pk: "id" },
   roles: { pk: "id", colMap: { desc: "descripcion" } },
   planCuentas: { pk: "codigo" },
-  cajasBancos: { pk: "id" },
   terceros: { pk: "id" },
-  productos: { pk: "id", exclude: ["stock"] },
-  empleados: { pk: "id" },
-  cotizaciones: { pk: "id", jsonCols: ["items"] },
-  pedidos: { pk: "id", jsonCols: ["items"] },
-  remisiones: { pk: "id", jsonCols: ["items"] },
-  facturas: { pk: "id", jsonCols: ["items", "pagos"] },
-  ordenesCompra: { pk: "id", jsonCols: ["items", "recibidoItems"] },
-  recepciones: { pk: "id", jsonCols: ["items"] },
-  facturasCompra: { pk: "id", jsonCols: ["items"] },
-  movimientosInventario: { pk: "id" },
-  movimientosTesoreria: { pk: "id" },
-  comprobantes: { pk: "id", jsonCols: ["lineas", "origen"] },
-  nominas: { pk: "id", jsonCols: ["deducciones", "aportesPatronales", "prestaciones"] },
-  auditLog: { pk: "id" },
+  productos: { pk: "id" },
+  facturas: { pk: "id" },
+  facturaItems: { pk: "id" },
+  compras: { pk: "id" },
+  compraItems: { pk: "id" },
+  pagos: { pk: "id" },
+  cuentasBancarias: { pk: "id" },
+  movimientos: { pk: "id" },
+  nominas: { pk: "id" },
+  nominaItems: { pk: "id" },
   usuarios: { pk: "id" },
+  logs: { pk: "id" },
+  empresas: { pk: "id" }
 };
 
-const CONSECUTIVOS_TABLE = "consecutivos";
-const STOCK_TABLE = "productoStock";
-
-function mapRow(row, tableConfig) {
-  if (!row) return null;
-  const result = { ...row };
-  if (tableConfig.jsonCols) {
-    for (const col of tableConfig.jsonCols) {
-      if (result[col] !== undefined) result[col] = parseCol(result[col]);
-    }
-  }
-  if (tableConfig.colMap) {
-    for (const [dbCol, jsKey] of Object.entries(tableConfig.colMap)) {
-      if (result[dbCol] !== undefined) {
-        result[jsKey] = result[dbCol];
-        delete result[dbCol];
-      }
-    }
-  }
-  return result;
+function getTable(tableName) {
+  return TABLES[tableName];
 }
 
-export function loadFullState() {
-  if (usePG) return loadFullStatePG();
-
-  const state = { consecutivos: {} };
-  for (const [table, config] of Object.entries(TABLES)) {
-    const rows = db.prepare(`SELECT * FROM ${table}`).all();
-    state[table] = rows.map((r) => mapRow(r, config));
+export async function query(sql, params = []) {
+  if (!usePG) {
+    throw new Error("SQLite no está soportado");
   }
-  const consecutivos = db.prepare(`SELECT * FROM ${CONSECUTIVOS_TABLE}`).all();
-  for (const r of consecutivos) state.consecutivos[r.tipo] = r.valor;
-  const stockRows = db.prepare(`SELECT * FROM ${STOCK_TABLE}`).all();
-  for (const p of state.productos) {
-    p.stock = {};
-    for (const s of stockRows) {
-      if (s.productoId === p.id) p.stock[s.bodegaId] = s.cantidad;
-    }
+  const client = await pgPool.connect();
+  try {
+    const result = await client.query(sql, params);
+    return result.rows;
+  } finally {
+    client.release();
   }
-  return state;
 }
 
-export function saveFullState(data) {
-  if (usePG) return saveFullStatePG(data);
-
-  const tx = db.transaction(() => {
-    const orderedTables = [
-      "nominas", "comprobantes", "auditLog",
-      "movimientosTesoreria", "movimientosInventario",
-      "facturasCompra", "recepciones", "ordenesCompra",
-      "facturas", "remisiones", "pedidos", "cotizaciones",
-      "terceros", "productos", "empleados",
-      "cajasBancos", "bodegas", "sedes",
-      "roles", "planCuentas", "empresa",
-      "usuarios",
-    ];
-    for (const table of orderedTables) {
-      db.prepare(`DELETE FROM ${table}`).run();
-    }
-    db.prepare(`DELETE FROM ${CONSECUTIVOS_TABLE}`).run();
-    db.prepare(`DELETE FROM ${STOCK_TABLE}`).run();
-
-    for (const [table, config] of Object.entries(TABLES)) {
-      const rows = data[table] || [];
-      if (rows.length === 0) continue;
-      const cols = Object.keys(rows[0])
-        .filter((c) => !config.exclude?.includes(c))
-        .map((c) => (config.colMap?.[c] ? config.colMap[c] : c));
-      const insert = db.prepare(
-        `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`
-      );
-      for (const row of rows) {
-        const values = cols.map((c) => {
-          const val = row[c];
-          if (config.jsonCols?.includes(c)) return jsonCol(val);
-          if (config.colMap) {
-            const reverse = Object.entries(config.colMap).find(([, v]) => v === c);
-            if (reverse) c = reverse[0];
-          }
-          return val;
-        });
-        insert.run(...values);
-      }
-    }
-
-    if (data.consecutivos) {
-      const cs = db.prepare("INSERT INTO consecutivos (tipo, valor) VALUES (?, ?)");
-      for (const [tipo, valor] of Object.entries(data.consecutivos)) {
-        cs.run(tipo, valor);
-      }
-    }
-
-    const st = db.prepare("INSERT INTO producto_stock (productoId, bodegaId, cantidad) VALUES (?, ?, ?)");
-    for (const p of data.productos || []) {
-      if (p.stock) {
-        for (const [bodegaId, cantidad] of Object.entries(p.stock)) {
-          st.run(p.id, bodegaId, cantidad);
-        }
-      }
-    }
-  });
-
-  tx();
+export async function queryOne(sql, params = []) {
+  const rows = await query(sql, params);
+  return rows[0] || null;
 }
 
-export { db as default };
+export async function insert(table, data) {
+  const tableDef = getTable(table);
+  if (!tableDef) throw new Error(`Tabla ${table} no existe`);
+  
+  const keys = Object.keys(data);
+  const values = keys.map((_, i) => `$${i + 1}`);
+  const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${values.join(", ")}) RETURNING *`;
+  const result = await query(sql, Object.values(data));
+  return result[0] || null;
+}
+
+export async function update(table, id, data) {
+  const tableDef = getTable(table);
+  if (!tableDef) throw new Error(`Tabla ${table} no existe`);
+  
+  const keys = Object.keys(data);
+  const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(", ");
+  const sql = `UPDATE ${table} SET ${setClause} WHERE ${tableDef.pk} = $${keys.length + 1} RETURNING *`;
+  const result = await query(sql, [...Object.values(data), id]);
+  return result[0] || null;
+}
+
+export async function remove(table, id) {
+  const tableDef = getTable(table);
+  if (!tableDef) throw new Error(`Tabla ${table} no existe`);
+  
+  const sql = `DELETE FROM ${table} WHERE ${tableDef.pk} = $1 RETURNING *`;
+  const result = await query(sql, [id]);
+  return result[0] || null;
+}
+
+export async function find(table, filters = {}) {
+  const keys = Object.keys(filters);
+  if (keys.length === 0) {
+    const sql = `SELECT * FROM ${table}`;
+    return await query(sql);
+  }
+  const conditions = keys.map((key, i) => `${key} = $${i + 1}`).join(" AND ");
+  const sql = `SELECT * FROM ${table} WHERE ${conditions}`;
+  return await query(sql, Object.values(filters));
+}
+
+export async function findOne(table, filters = {}) {
+  const rows = await find(table, filters);
+  return rows[0] || null;
+}
+
+export default {
+  initDB,
+  loadFullState,
+  saveFullState,
+  closeDB,
+  query,
+  queryOne,
+  insert,
+  update,
+  remove,
+  find,
+  findOne,
+  jsonCol,
+  parseCol
+};
