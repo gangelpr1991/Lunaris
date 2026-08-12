@@ -31,26 +31,70 @@ export function closeDB() {
 export function jsonCol(val) { return val ? JSON.stringify(val) : null; }
 export function parseCol(val) { return val ? JSON.parse(val) : null; }
 
+// Postgres guarda cualquier nombre de columna SIN comillas en minusculas -
+// aunque el CREATE TABLE en pgdb.js este escrito como "pedidoId", la
+// columna real en la base de datos queda "pedidoid", y pg devuelve las
+// filas con esa misma clave en minusculas. Todo el codigo de negocio (el
+// original y el restaurado) fue escrito esperando camelCase
+// (fila.pedidoId, fila.saldoCartera, etc.) - sin esto, cada lectura de un
+// campo con mas de una palabra devuelve undefined en silencio. Mapa
+// explicito (no adivinado por regex) porque una conversion automatica
+// minuscula->camelCase no es reversible de forma confiable.
+const COLUMN_CASE_MAP = {
+  sedeid: "sedeId", tipodoc: "tipoDoc", numdoc: "numDoc", cupocredito: "cupoCredito",
+  condicionpagodias: "condicionPagoDias", listaprecios: "listaPrecios", saldocartera: "saldoCartera",
+  saldocxp: "saldoCxP", creadoen: "creadoEn", costopromedio: "costoPromedio", tienelote: "tieneLote",
+  productoid: "productoId", bodegaid: "bodegaId", areaid: "areaId", tipocontrato: "tipoContrato",
+  fechaingreso: "fechaIngreso", terceroid: "terceroId", cotizacionid: "cotizacionId",
+  pedidoid: "pedidoId", remisionid: "remisionId", ocid: "ocId", proveedorid: "proveedorId",
+  recepcionid: "recepcionId", vencimiento: "vencimiento", estadodian: "estadoDian", cufe: "cufe",
+  motivoanulacion: "motivoAnulacion", recibiditems: "recibidoItems", costounitario: "costoUnitario",
+  saldoresultante: "saldoResultante", cajabancoid: "cajaBancoId", totaldebito: "totalDebito",
+  totalcredito: "totalCredito", empleadoid: "empleadoId", empleadonombre: "empleadoNombre",
+  salariobase: "salarioBase", auxtransporte: "auxTransporte", deduccionestotal: "deduccionesTotal",
+  netopagar: "netoPagar", aportespatronales: "aportesPatronales", aportespatronalestotal: "aportesPatronalesTotal",
+  prestacionestotal: "prestacionesTotal", costototalempresa: "costoTotalEmpresa", password_hash: "passwordHash",
+  created_at: "createdAt"
+};
+
+function camelizeRow(row) {
+  if (!row || typeof row !== "object") return row;
+  const out = {};
+  for (const [key, value] of Object.entries(row)) {
+    out[COLUMN_CASE_MAP[key] || key] = value;
+  }
+  return out;
+}
+
+function camelizeRows(rows) {
+  return rows.map(camelizeRow);
+}
+
 const TABLES = {
   empresa: { pk: "id" },
   sedes: { pk: "id" },
   bodegas: { pk: "id" },
-  roles: { pk: "id", colMap: { desc: "descripcion" } },
+  roles: { pk: "id" },
   planCuentas: { pk: "codigo" },
+  cajasBancos: { pk: "id" },
   terceros: { pk: "id" },
   productos: { pk: "id" },
+  productoStock: { pk: null }, // clave compuesta (productoId, bodegaId) - no usar update()/remove() genericos con esta tabla
+  empleados: { pk: "id" },
+  consecutivos: { pk: "tipo" },
+  cotizaciones: { pk: "id" },
+  pedidos: { pk: "id" },
+  remisiones: { pk: "id" },
   facturas: { pk: "id" },
-  facturaItems: { pk: "id" },
-  compras: { pk: "id" },
-  compraItems: { pk: "id" },
-  pagos: { pk: "id" },
-  cuentasBancarias: { pk: "id" },
-  movimientos: { pk: "id" },
+  ordenesCompra: { pk: "id" },
+  recepciones: { pk: "id" },
+  facturasCompra: { pk: "id" },
+  movimientosInventario: { pk: "id" },
+  movimientosTesoreria: { pk: "id" },
+  comprobantes: { pk: "id" },
   nominas: { pk: "id" },
-  nominaItems: { pk: "id" },
-  usuarios: { pk: "id" },
-  logs: { pk: "id" },
-  empresas: { pk: "id" }
+  auditLog: { pk: "id" },
+  usuarios: { pk: "id" }
 };
 
 function getTable(tableName) {
@@ -64,7 +108,7 @@ export async function query(sql, params = []) {
   const client = await pgPool.connect();
   try {
     const result = await client.query(sql, params);
-    return result.rows;
+    return camelizeRows(result.rows);
   } finally {
     client.release();
   }
@@ -73,6 +117,43 @@ export async function query(sql, params = []) {
 export async function queryOne(sql, params = []) {
   const rows = await query(sql, params);
   return rows[0] || null;
+}
+
+/**
+ * Corre un bloque de operaciones dentro de una unica transaccion real de
+ * Postgres (BEGIN/COMMIT/ROLLBACK sobre la MISMA conexion) - query()/
+ * queryOne() de arriba, en cambio, sacan una conexion nueva del pool en
+ * cada llamada, asi que dos queries seguidas ahi nunca comparten
+ * transaccion. Esto es necesario para las operaciones de negocio reales
+ * (facturar, recibir pago, liquidar nomina, etc.) donde varias tablas se
+ * actualizan juntas (factura + saldo del tercero + comprobante contable) y
+ * o se guardan todas o ninguna - antes de esto, un error a mitad de camino
+ * podia dejar la factura creada pero el comprobante contable sin cuadrar.
+ *
+ * El callback recibe un objeto { query, queryOne } que corre sobre la
+ * conexion en transaccion (NO usar el query()/queryOne() de arriba adentro
+ * del callback, romperia el aislamiento).
+ */
+export async function transaction(callback) {
+  if (!usePG) {
+    throw new Error("SQLite no está soportado");
+  }
+  const client = await pgPool.connect();
+  const tx = {
+    query: async (sql, params = []) => camelizeRows((await client.query(sql, params)).rows),
+    queryOne: async (sql, params = []) => camelizeRow((await client.query(sql, params)).rows[0]) || null,
+  };
+  try {
+    await client.query("BEGIN");
+    const result = await callback(tx);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export async function insert(table, data) {
@@ -129,6 +210,7 @@ export default {
   closeDB,
   query,
   queryOne,
+  transaction,
   insert,
   update,
   remove,

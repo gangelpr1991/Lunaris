@@ -204,7 +204,7 @@ const ACTIONS = {
  *       403:
  *         description: Rol sin permisos para esta accion
  */
-app.post("/api/accion", (req, res) => {
+app.post("/api/accion", async (req, res) => {
   try {
     const { type, payload } = req.body;
     if (!type) return res.status(400).json({ ok: false, error: "Tipo de accion requerido." });
@@ -214,14 +214,24 @@ app.post("/api/accion", (req, res) => {
     const actionRoleMw = requireActionRole(type);
     actionRoleMw(req, res, () => {
       const validationMw = validateBody(type);
-      validationMw(req, res, () => {
-        const result = fn(req.actor, payload || req.body.payload || {});
-        if (result?.error) {
-          logger.warn(`Accion ${type} rechazada: ${result.error}`, { user: req.user?.email });
-          return res.json({ ok: false, error: result.error });
+      validationMw(req, res, async () => {
+        try {
+          // fn() es async desde la migracion a Postgres (antes, con SQLite
+          // sincrono, no hacia falta await) - sin este await, la respuesta
+          // se mandaba antes de que la operacion real terminara, y
+          // result?.error nunca podia detectar nada porque result era una
+          // Promise pendiente, no el resultado real.
+          const result = await fn(req.actor, payload || req.body.payload || {});
+          if (result?.error) {
+            logger.warn(`Accion ${type} rechazada: ${result.error}`, { user: req.user?.email });
+            return res.json({ ok: false, error: result.error });
+          }
+          logger.info(`Accion ${type} ejecutada por ${req.user?.email}`);
+          res.json({ ok: true, result });
+        } catch (e) {
+          logger.error(`Error ejecutando accion ${type}: ${e.message}`, { stack: e.stack });
+          res.status(500).json({ ok: false, error: e.message });
         }
-        logger.info(`Accion ${type} ejecutada por ${req.user?.email}`);
-        res.json({ ok: true, result });
       });
     });
   } catch (e) {
