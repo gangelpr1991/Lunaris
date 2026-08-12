@@ -1013,7 +1013,7 @@ export async function liquidarNomina(actor, { periodo, empleadoIds }) {
         lineas: [
           { cuenta: "5105", nombre: "Gastos de personal", tercero: emp.nombre, debito: s + aux + aportes + prest, credito: 0 },
           { cuenta: "1110", nombre: "Bancos - Cta corriente", tercero: emp.nombre, debito: 0, credito: neto },
-          { cuenta: "2505", nombre: "Salarios y prestaciones por pagar", tercero: emp.nombre, debito: 0, credito: ded + aportes },
+          { cuenta: "2505", nombre: "Salarios y prestaciones por pagar", tercero: emp.nombre, debito: 0, credito: ded + aportes + prest },
         ],
       });
       await tx.query(
