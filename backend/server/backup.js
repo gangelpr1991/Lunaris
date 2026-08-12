@@ -52,10 +52,9 @@ function backupPostgreSQL() {
   const backupFile = join(BACKUP_DIR, `lunaris_pg_${timestamp}.sql`);
 
   try {
-    const envVars = `PGPASSWORD=${env.PG_PASSWORD}`;
     execSync(
-      `${envVars} pg_dump -h ${env.PG_HOST} -p ${env.PG_PORT} -U ${env.PG_USER} -d ${env.PG_DATABASE} -F p > "${backupFile}"`,
-      { stdio: "pipe", timeout: 30000 }
+      `pg_dump -h ${env.PG_HOST} -p ${env.PG_PORT} -U ${env.PG_USER} -d ${env.PG_DATABASE} -F p > "${backupFile}"`,
+      { stdio: "pipe", timeout: 30000, env: { ...process.env, PGPASSWORD: env.PG_PASSWORD } }
     );
     logger.info(`Backup PostgreSQL creado: ${backupFile}`);
     return backupFile;

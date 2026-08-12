@@ -89,7 +89,7 @@ app.get("/api/health", (_req, res) => {
  *       401:
  *         description: Credenciales invalidas
  */
-app.post("/api/auth/login", authLimiter, (req, res) => {
+app.post("/api/auth/login", authLimiter, async (req, res) => {
   try {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -97,8 +97,8 @@ app.post("/api/auth/login", authLimiter, (req, res) => {
       return res.status(400).json({ ok: false, error: errors });
     }
     const { email, password } = parsed.data;
-    const user = findUserByEmail(email);
-    if (!user || !comparePassword(password, user.password_hash)) {
+    const user = await findUserByEmail(email);
+    if (!user || !comparePassword(password, user.passwordHash)) {
       logger.warn(`Intento de login fallido para: ${email}`);
       return res.status(401).json({ ok: false, error: "Credenciales invalidas." });
     }
@@ -132,9 +132,9 @@ app.post("/api/auth/login", authLimiter, (req, res) => {
 app.use("/api/estado", authMiddleware);
 app.use("/api/accion", authMiddleware);
 
-app.get("/api/estado", (_req, res) => {
+app.get("/api/estado", async (_req, res) => {
   try {
-    const data = loadFullState();
+    const data = await loadFullState();
     res.json(data);
   } catch (e) {
     logger.error(`Error cargando estado: ${e.message}`);
@@ -142,9 +142,9 @@ app.get("/api/estado", (_req, res) => {
   }
 });
 
-app.put("/api/estado", requireWriteRole, (req, res) => {
+app.put("/api/estado", requireWriteRole, async (req, res) => {
   try {
-    saveFullState(req.body);
+    await saveFullState(req.body);
     res.json({ ok: true });
   } catch (e) {
     logger.error(`Error guardando estado: ${e.message}`);
@@ -249,15 +249,22 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ ok: false, error: "Error interno del servidor." });
 });
 
-initDB();
-runMigrations();
-ensureDefaultAdmin();
-startBackupScheduler();
+async function start() {
+  await initDB();
+  await runMigrations();
+  await ensureDefaultAdmin();
+  startBackupScheduler();
 
-app.listen(PORT, () => {
-  logger.info(`Lunaris API en http://localhost:${PORT}`);
-  logger.info(`Base de datos: ${env.DB_TYPE}`);
-  logger.info("Logica de negocio — 20 acciones disponibles.");
-  logger.info("Seguridad: Helmet + CORS + Rate Limit + JWT + Zod + RBAC.");
-  logger.info(`Documentacion API: http://localhost:${PORT}/api/docs`);
+  app.listen(PORT, () => {
+    logger.info(`Lunaris API en http://localhost:${PORT}`);
+    logger.info(`Base de datos: ${env.DB_TYPE}`);
+    logger.info("Logica de negocio — 20 acciones disponibles.");
+    logger.info("Seguridad: Helmet + CORS + Rate Limit + JWT + Zod + RBAC.");
+    logger.info(`Documentacion API: http://localhost:${PORT}/api/docs`);
+  });
+}
+
+start().catch((e) => {
+  logger.error(`Error iniciando servidor: ${e.message}`, { stack: e.stack });
+  process.exit(1);
 });

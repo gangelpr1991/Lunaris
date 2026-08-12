@@ -26,24 +26,25 @@ export function verifyToken(token) {
   return jwt.verify(token, JWT_SECRET);
 }
 
-export function findUserByEmail(email) {
-  return db.prepare("SELECT * FROM usuarios WHERE email = ? AND activo = 1").get(email);
+export async function findUserByEmail(email) {
+  return await db.queryOne("SELECT * FROM usuarios WHERE email = $1 AND activo = 1", [email]);
 }
 
-export function createUser({ email, password, nombre, rol }) {
+export async function createUser({ email, password, nombre, rol }) {
   const id = "usr-" + Math.random().toString(36).slice(2, 10);
   const hash = hashPassword(password);
   const createdAt = new Date().toISOString();
-  db.prepare(
-    "INSERT INTO usuarios (id, email, password_hash, nombre, rol, activo, created_at) VALUES (?,?,?,?,?,?,?)"
-  ).run(id, email, hash, nombre, rol, 1, createdAt);
+  await db.query(
+    "INSERT INTO usuarios (id, email, password_hash, nombre, rol, activo, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+    [id, email, hash, nombre, rol, 1, createdAt]
+  );
   return { id, email, nombre, rol, activo: true, created_at: createdAt };
 }
 
-export function ensureDefaultAdmin() {
-  const existing = db.prepare("SELECT id FROM usuarios WHERE email = ?").get("admin@lunaris.com");
+export async function ensureDefaultAdmin() {
+  const existing = await db.queryOne("SELECT id FROM usuarios WHERE email = $1", ["admin@lunaris.com"]);
   if (!existing) {
-    createUser({
+    await createUser({
       email: "admin@lunaris.com",
       password: process.env.ADMIN_DEFAULT_PASSWORD || "Admin123!",
       nombre: "Administrador Lunaris",
@@ -53,7 +54,7 @@ export function ensureDefaultAdmin() {
   }
 }
 
-export function authMiddleware(req, res, next) {
+export async function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith("Bearer ")) {
     return res.status(401).json({ ok: false, error: "Token de autenticacion requerido." });
@@ -61,7 +62,7 @@ export function authMiddleware(req, res, next) {
   const token = header.slice(7);
   try {
     const decoded = verifyToken(token);
-    const user = findUserByEmail(decoded.email);
+    const user = await findUserByEmail(decoded.email);
     if (!user) {
       return res.status(401).json({ ok: false, error: "Usuario no encontrado o desactivado." });
     }

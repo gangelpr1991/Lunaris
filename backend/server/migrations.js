@@ -3,10 +3,10 @@ import logger from "./logger.js";
 
 const MIGRATIONS_TABLE = "_migrations";
 
-export function initMigrations() {
-  db.exec(`
+export async function initMigrations() {
+  await db.query(`
     CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT UNIQUE NOT NULL,
       applied_at TEXT NOT NULL
     )
@@ -19,14 +19,14 @@ export function defineMigration(name, up) {
   migrations.push({ name, up });
 }
 
-function getApplied() {
-  const rows = db.prepare(`SELECT name FROM ${MIGRATIONS_TABLE} ORDER BY id`).all();
+async function getApplied() {
+  const rows = await db.query(`SELECT name FROM ${MIGRATIONS_TABLE} ORDER BY id`);
   return new Set(rows.map((r) => r.name));
 }
 
-export function runMigrations() {
-  initMigrations();
-  const applied = getApplied();
+export async function runMigrations() {
+  await initMigrations();
+  const applied = await getApplied();
   const pending = migrations.filter((m) => !applied.has(m.name));
 
   if (pending.length === 0) {
@@ -35,29 +35,27 @@ export function runMigrations() {
   }
 
   logger.info(`Migraciones: ${pending.length} pendiente(s).`);
-  const tx = db.transaction(() => {
-    for (const m of pending) {
+  for (const m of pending) {
+    try {
       logger.info(`Migrando: ${m.name}`);
-      m.up(db);
-      db.prepare(`INSERT INTO ${MIGRATIONS_TABLE} (name, applied_at) VALUES (?, ?)`).run(
-        m.name,
-        new Date().toISOString()
-      );
+      await db.transaction(async (tx) => {
+        await m.up(tx);
+        await tx.query(
+          `INSERT INTO ${MIGRATIONS_TABLE} (name, applied_at) VALUES ($1, $2)`,
+          [m.name, new Date().toISOString()]
+        );
+      });
       logger.info(`Migracion aplicada: ${m.name}`);
+    } catch (e) {
+      logger.error(`Error en migracion: ${e.message}`);
+      throw e;
     }
-  });
-
-  try {
-    tx();
-    logger.info(`Migraciones completadas: ${pending.length} aplicada(s).`);
-  } catch (e) {
-    logger.error(`Error en migracion: ${e.message}`);
-    throw e;
   }
+  logger.info(`Migraciones completadas: ${pending.length} aplicada(s).`);
 }
 
-defineMigration("001_create_usuarios", (db) => {
-  db.exec(`
+defineMigration("001_create_usuarios", async (tx) => {
+  await tx.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,

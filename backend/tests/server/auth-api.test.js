@@ -7,11 +7,11 @@ function createTestApp() {
   const app = express();
   app.use(express.json());
 
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ ok: false, error: "Faltan campos" });
-    const user = findUserByEmail(email);
-    if (!user || !comparePassword(password, user.password_hash)) {
+    const user = await findUserByEmail(email);
+    if (!user || !comparePassword(password, user.passwordHash)) {
       return res.status(401).json({ ok: false, error: "Credenciales invalidas." });
     }
     const token = generateToken(user);
@@ -37,10 +37,11 @@ describe("Auth API", () => {
   let token;
 
   it("POST /api/auth/login con credenciales correctas", async () => {
-    ensureDefaultAdmin();
+    await ensureDefaultAdmin();
+    const adminPassword = process.env.ADMIN_DEFAULT_PASSWORD || "Admin123!";
     const res = await request(app)
       .post("/api/auth/login")
-      .send({ email: "admin@lunaris.com", password: "Admin123!" });
+      .send({ email: "admin@lunaris.com", password: adminPassword });
 
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
