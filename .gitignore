@@ -8,3 +8,4 @@ lunaris_v2.db-*
 .env
 backups/
 logs/
+*.log
