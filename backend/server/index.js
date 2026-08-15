@@ -132,16 +132,22 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 app.use("/api/estado", authMiddleware);
 app.use("/api/accion", authMiddleware);
 
-app.get("/api/estado", async (_req, res) => {
+app.get('/api/estado', async (_req, res) => {
   try {
     const data = await loadFullState();
+    // El hash de la contrasena nunca debe salir del servidor, ni siquiera
+    // hasheado - el frontend no lo necesita para nada.
+    if (Array.isArray(data.usuarios)) {
+      data.usuarios = data.usuarios.map(
+        ({ passwordHash, password_hash, ...resto }) => resto
+      );
+    }
     res.json(data);
   } catch (e) {
     logger.error(`Error cargando estado: ${e.message}`);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-
 app.put("/api/estado", requireWriteRole, async (req, res) => {
   try {
     await saveFullState(req.body);
