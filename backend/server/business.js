@@ -1,7 +1,7 @@
 import db from "./db.js";
 
 let __idSeq = 10000;
-const nid = (p) => `${p}-${(__idSeq++).toString(36)}`;
+const nid = (p) => `${p}-${(__idSeq++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const todayISO = () => new Date().toISOString();
 const addDays = (iso, d) => new Date(new Date(iso).getTime() + d * 86400000).toISOString();
 
@@ -598,7 +598,7 @@ export async function crearCotizacion(actor, { terceroId, sedeId, items, vendedo
   });
 }
 
-export async function aprobarCotizacion(actor, cotizacionId) {
+export async function aprobarCotizacion(actor, { id: cotizacionId }) {
   return await db.transaction(async (tx) => {
     const cot = await tx.queryOne("SELECT * FROM cotizaciones WHERE id = $1", [cotizacionId]);
     if (!cot || cot.estado !== "borrador") return { error: "Solo se pueden aprobar cotizaciones en borrador." };
@@ -608,7 +608,7 @@ export async function aprobarCotizacion(actor, cotizacionId) {
   });
 }
 
-export async function convertirPedido(actor, cotizacionId) {
+export async function convertirPedido(actor, { id: cotizacionId }) {
   return await db.transaction(async (tx) => {
     const cot = await tx.queryOne("SELECT * FROM cotizaciones WHERE id = $1", [cotizacionId]);
     if (!cot || cot.estado !== "aprobada") return { error: "La cotizacion debe estar aprobada antes de convertirla en pedido." };

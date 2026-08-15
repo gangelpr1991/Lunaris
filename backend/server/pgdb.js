@@ -62,9 +62,35 @@ const TABLES = {
 const CONSECUTIVOS_TABLE = "consecutivos";
 const STOCK_TABLE = "productoStock";
 
+export const COLUMN_CASE_MAP = {
+  sedeid: "sedeId", tipodoc: "tipoDoc", numdoc: "numDoc", cupocredito: "cupoCredito",
+  condicionpagodias: "condicionPagoDias", listaprecios: "listaPrecios", saldocartera: "saldoCartera",
+  saldocxp: "saldoCxP", creadoen: "creadoEn", costopromedio: "costoPromedio", tienelote: "tieneLote",
+  productoid: "productoId", bodegaid: "bodegaId", areaid: "areaId", tipocontrato: "tipoContrato",
+  fechaingreso: "fechaIngreso", terceroid: "terceroId", cotizacionid: "cotizacionId",
+  pedidoid: "pedidoId", remisionid: "remisionId", ocid: "ocId", proveedorid: "proveedorId",
+  recepcionid: "recepcionId", vencimiento: "vencimiento", estadodian: "estadoDian", cufe: "cufe",
+  motivoanulacion: "motivoAnulacion", recibiditems: "recibidoItems", costounitario: "costoUnitario",
+  saldoresultante: "saldoResultante", cajabancoid: "cajaBancoId", totaldebito: "totalDebito",
+  totalcredito: "totalCredito", empleadoid: "empleadoId", empleadonombre: "empleadoNombre",
+  salariobase: "salarioBase", auxtransporte: "auxTransporte", deduccionestotal: "deduccionesTotal",
+  netopagar: "netoPagar", aportespatronales: "aportesPatronales", aportespatronalestotal: "aportesPatronalesTotal",
+  prestacionestotal: "prestacionesTotal", costototalempresa: "costoTotalEmpresa", password_hash: "passwordHash",
+  created_at: "createdAt"
+};
+
+function camelizeRowPG(row) {
+  if (!row || typeof row !== "object") return row;
+  const out = {};
+  for (const [key, value] of Object.entries(row)) {
+    out[COLUMN_CASE_MAP[key] || key] = value;
+  }
+  return out;
+}
+
 function mapRow(row, tableConfig) {
   if (!row) return null;
-  const result = { ...row };
+  let result = { ...row };
   if (tableConfig.jsonCols) {
     for (const col of tableConfig.jsonCols) {
       if (result[col] !== undefined && typeof result[col] === "string") {
@@ -80,6 +106,7 @@ function mapRow(row, tableConfig) {
       }
     }
   }
+  result = camelizeRowPG(result);
   return result;
 }
 
@@ -127,13 +154,20 @@ export async function saveFullStatePG(data) {
     ];
 
     for (const table of orderedTables) {
-      await client.query(`DELETE FROM ${table}`);
+      if (Object.prototype.hasOwnProperty.call(data, table)) {
+        await client.query(`DELETE FROM ${table}`);
+      }
     }
-    await client.query(`DELETE FROM ${CONSECUTIVOS_TABLE}`);
-    await client.query(`DELETE FROM ${STOCK_TABLE}`);
+    if (Object.prototype.hasOwnProperty.call(data, CONSECUTIVOS_TABLE)) {
+      await client.query(`DELETE FROM ${CONSECUTIVOS_TABLE}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(data, "productos")) {
+      await client.query(`DELETE FROM ${STOCK_TABLE}`);
+    }
 
     for (const [table, config] of Object.entries(TABLES)) {
-      const rows = data[table] || [];
+      if (!Object.prototype.hasOwnProperty.call(data, table)) continue;
+      const rows = Array.isArray(data[table]) ? data[table] : data[table] ? [data[table]] : [];
       if (rows.length === 0) continue;
 
       const cols = Object.keys(rows[0])

@@ -2,7 +2,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { SCHEMA } from "./schema.js";
 import { env } from "./env.js";
-import pgPool, { initPGDB, loadFullStatePG, saveFullStatePG, closePGDB } from "./pgdb.js";
+import pgPool, { initPGDB, loadFullStatePG, saveFullStatePG, closePGDB, COLUMN_CASE_MAP } from "./pgdb.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 let usePG = env.DB_TYPE === "postgresql";
@@ -40,23 +40,6 @@ export function parseCol(val) { return val ? JSON.parse(val) : null; }
 // campo con mas de una palabra devuelve undefined en silencio. Mapa
 // explicito (no adivinado por regex) porque una conversion automatica
 // minuscula->camelCase no es reversible de forma confiable.
-const COLUMN_CASE_MAP = {
-  sedeid: "sedeId", tipodoc: "tipoDoc", numdoc: "numDoc", cupocredito: "cupoCredito",
-  condicionpagodias: "condicionPagoDias", listaprecios: "listaPrecios", saldocartera: "saldoCartera",
-  saldocxp: "saldoCxP", creadoen: "creadoEn", costopromedio: "costoPromedio", tienelote: "tieneLote",
-  productoid: "productoId", bodegaid: "bodegaId", areaid: "areaId", tipocontrato: "tipoContrato",
-  fechaingreso: "fechaIngreso", terceroid: "terceroId", cotizacionid: "cotizacionId",
-  pedidoid: "pedidoId", remisionid: "remisionId", ocid: "ocId", proveedorid: "proveedorId",
-  recepcionid: "recepcionId", vencimiento: "vencimiento", estadodian: "estadoDian", cufe: "cufe",
-  motivoanulacion: "motivoAnulacion", recibiditems: "recibidoItems", costounitario: "costoUnitario",
-  saldoresultante: "saldoResultante", cajabancoid: "cajaBancoId", totaldebito: "totalDebito",
-  totalcredito: "totalCredito", empleadoid: "empleadoId", empleadonombre: "empleadoNombre",
-  salariobase: "salarioBase", auxtransporte: "auxTransporte", deduccionestotal: "deduccionesTotal",
-  netopagar: "netoPagar", aportespatronales: "aportesPatronales", aportespatronalestotal: "aportesPatronalesTotal",
-  prestacionestotal: "prestacionesTotal", costototalempresa: "costoTotalEmpresa", password_hash: "passwordHash",
-  created_at: "createdAt"
-};
-
 function camelizeRow(row) {
   if (!row || typeof row !== "object") return row;
   const out = {};
