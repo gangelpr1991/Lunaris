@@ -468,8 +468,8 @@ async function nextConsecutivoTx(tx, key, prefix) {
   const row = await tx.queryOne("SELECT valor FROM consecutivos WHERE tipo = $1", [key]);
   const next = (row?.valor || 0) + 1;
   await tx.query(
-    "INSERT INTO consecutivos (tipo, valor) VALUES ($1, $2) ON CONFLICT (tipo) DO UPDATE SET valor = $2",
-    [key, next]
+    `INSERT INTO consecutivos ("tenantId", tipo, valor) VALUES ($1, $2, $3) ON CONFLICT ("tenantId", tipo) DO UPDATE SET valor = $3`,
+    [tx.tenantId, key, next]
   );
   const year = new Date().getFullYear();
   return `${prefix}-${year}-${String(next).padStart(6, "0")}`;
@@ -477,8 +477,8 @@ async function nextConsecutivoTx(tx, key, prefix) {
 
 async function pushAuditTx(tx, actor, accion, detalle) {
   await tx.query(
-    "INSERT INTO auditLog (id, fecha, usuario, rol, accion, detalle) VALUES ($1, $2, $3, $4, $5, $6)",
-    [nid("aud"), todayISO(), actor?.usuario || "API", actor?.rol || "-", accion, detalle]
+    `INSERT INTO auditLog (id, fecha, usuario, rol, accion, detalle, "tenantId") VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [nid("aud"), todayISO(), actor?.usuario || "API", actor?.rol || "-", accion, detalle, tx.tenantId]
   );
 }
 
@@ -492,10 +492,10 @@ async function crearComprobanteSQLTx(tx, { tipo, fecha, origen, lineas, glosa })
   const numero = await nextConsecutivoTx(tx, "comprobante", "CC");
   const id = nid("cmp");
   await tx.query(
-    `INSERT INTO comprobantes (id,numero,tipo,fecha,origen,glosa,lineas,totalDebito,totalCredito,balanceado)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    `INSERT INTO comprobantes (id,numero,tipo,fecha,origen,glosa,lineas,totalDebito,totalCredito,balanceado,"tenantId")
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
     [id, numero, tipo, fecha, origen ? JSON.stringify(origen) : null, glosa, JSON.stringify(lineas),
-     totalDebito, totalCredito, Math.abs(totalDebito - totalCredito) < 1 ? 1 : 0]
+     totalDebito, totalCredito, Math.abs(totalDebito - totalCredito) < 1 ? 1 : 0, tx.tenantId]
   );
   return { id, numero };
 }
@@ -519,22 +519,22 @@ async function moverInventarioSQLTx(tx, { productoId, bodegaId, cantidad, tipo, 
       await tx.query("UPDATE productos SET costoPromedio = $1 WHERE id = $2", [nuevoCosto, productoId]);
     }
     await tx.query(
-      `INSERT INTO productoStock (productoId, bodegaId, cantidad) VALUES ($1,$2,$3)
-       ON CONFLICT (productoId,bodegaId) DO UPDATE SET cantidad = productoStock.cantidad + $3`,
-      [productoId, bodegaId, cantidad]
+      `INSERT INTO productoStock ("tenantId", productoId, bodegaId, cantidad) VALUES ($1,$2,$3,$4)
+       ON CONFLICT ("tenantId",productoId,bodegaId) DO UPDATE SET cantidad = productoStock.cantidad + $4`,
+      [tx.tenantId, productoId, bodegaId, cantidad]
     );
   } else {
     await tx.query(
-      `INSERT INTO productoStock (productoId, bodegaId, cantidad) VALUES ($1,$2,0)
-       ON CONFLICT (productoId,bodegaId) DO UPDATE SET cantidad = GREATEST(0, productoStock.cantidad - $3)`,
-      [productoId, bodegaId, cantidad]
+      `INSERT INTO productoStock ("tenantId", productoId, bodegaId, cantidad) VALUES ($1,$2,$3,0)
+       ON CONFLICT ("tenantId",productoId,bodegaId) DO UPDATE SET cantidad = GREATEST(0, productoStock.cantidad - $4)`,
+      [tx.tenantId, productoId, bodegaId, cantidad]
     );
   }
   const stockFinal = await tx.queryOne("SELECT cantidad FROM productoStock WHERE productoId = $1 AND bodegaId = $2", [productoId, bodegaId]);
   const saldo = stockFinal?.cantidad || 0;
   await tx.query(
-    "INSERT INTO movimientosInventario (id, productoId, bodegaId, cantidad, tipo, origen, fecha, saldoResultante) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-    [nid("mov"), productoId, bodegaId, cantidad, tipo, origen, fecha, saldo]
+    `INSERT INTO movimientosInventario (id, productoId, bodegaId, cantidad, tipo, origen, fecha, saldoResultante, "tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [nid("mov"), productoId, bodegaId, cantidad, tipo, origen, fecha, saldo, tx.tenantId]
   );
 }
 
@@ -548,14 +548,14 @@ export async function crearTercero(actor, data) {
     if (existe) return { error: `Ya existe un tercero con el documento ${data.numDoc}.` };
     const t = { id: nid(data.tipo === "proveedor" ? "p" : "t"), saldoCartera: 0, saldoCxP: 0, creadoEn: todayISO(), ...data };
     await tx.query(
-      `INSERT INTO terceros (id,tipo,tipoDoc,numDoc,nombre,email,telefono,ciudad,cupoCredito,condicionPagoDias,listaPrecios,saldoCartera,saldoCxP,creadoEn)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      `INSERT INTO terceros (id,tipo,tipoDoc,numDoc,nombre,email,telefono,ciudad,cupoCredito,condicionPagoDias,listaPrecios,saldoCartera,saldoCxP,creadoEn,"tenantId")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [t.id, t.tipo, t.tipoDoc, t.numDoc, t.nombre, t.email, t.telefono, t.ciudad,
-       t.cupoCredito || 0, t.condicionPagoDias || 0, t.listaPrecios || "", t.saldoCartera || 0, t.saldoCxP || 0, t.creadoEn]
+       t.cupoCredito || 0, t.condicionPagoDias || 0, t.listaPrecios || "", t.saldoCartera || 0, t.saldoCxP || 0, t.creadoEn, tx.tenantId]
     );
     await pushAuditTx(tx, actor, "Crear tercero", `${t.nombre} (${t.tipo})`);
     return t;
-  });
+  }, actor?.tenantId);
 }
 
 export async function crearProducto(actor, data) {
@@ -564,13 +564,13 @@ export async function crearProducto(actor, data) {
     if (existe) return { error: `Ya existe un producto con el codigo ${data.codigo}.` };
     const p = { id: nid("prod"), ...data };
     await tx.query(
-      `INSERT INTO productos (id,codigo,nombre,categoria,unidad,precio,costoPromedio,iva,tieneLote,minimo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [p.id, p.codigo, p.nombre, p.categoria, p.unidad, p.precio || 0, p.costoPromedio || 0, p.iva ?? 19, p.tieneLote ? 1 : 0, p.minimo || 0]
+      `INSERT INTO productos (id,codigo,nombre,categoria,unidad,precio,costoPromedio,iva,tieneLote,minimo,"tenantId")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [p.id, p.codigo, p.nombre, p.categoria, p.unidad, p.precio || 0, p.costoPromedio || 0, p.iva ?? 19, p.tieneLote ? 1 : 0, p.minimo || 0, tx.tenantId]
     );
     await pushAuditTx(tx, actor, "Crear producto", `${p.codigo} - ${p.nombre}`);
     return p;
-  });
+  }, actor?.tenantId);
 }
 
 /* ====== VENTAS ====== */
@@ -589,13 +589,13 @@ export async function crearCotizacion(actor, { terceroId, sedeId, items, vendedo
     const iva = itemsEnq.reduce((s, i) => s + i.cantidad * i.precio * ((i.ivaPct ?? 19) / 100), 0);
     const total = subtotal + iva;
     await tx.query(
-      `INSERT INTO cotizaciones (id,numero,terceroId,sedeId,vendedor,fecha,subtotal,iva,total,estado,items)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [id, numero, terceroId, sedeId, vendedor || "Usuario demo", fecha, subtotal, iva, total, "borrador", JSON.stringify(itemsEnq)]
+      `INSERT INTO cotizaciones (id,numero,terceroId,sedeId,vendedor,fecha,subtotal,iva,total,estado,items,"tenantId")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [id, numero, terceroId, sedeId, vendedor || "Usuario demo", fecha, subtotal, iva, total, "borrador", JSON.stringify(itemsEnq), tx.tenantId]
     );
     await pushAuditTx(tx, actor, "Crear cotizacion", `${numero} por ${fmtCOP(total)}`);
     return { id, numero, terceroId, sedeId, fecha, items: itemsEnq, subtotal, iva, total, estado: "borrador" };
-  });
+  }, actor?.tenantId);
 }
 
 export async function aprobarCotizacion(actor, { id: cotizacionId }) {
@@ -605,7 +605,7 @@ export async function aprobarCotizacion(actor, { id: cotizacionId }) {
     await tx.query("UPDATE cotizaciones SET estado = 'aprobada' WHERE id = $1", [cotizacionId]);
     await pushAuditTx(tx, actor, "Aprobar cotizacion", cot.numero);
     return { ...cot, estado: "aprobada" };
-  });
+  }, actor?.tenantId);
 }
 
 export async function convertirPedido(actor, { id: cotizacionId }) {
@@ -618,14 +618,14 @@ export async function convertirPedido(actor, { id: cotizacionId }) {
     const items = db.parseCol(cot.items) || [];
     const subtotal = cot.subtotal, iva = cot.iva, total = cot.total;
     await tx.query(
-      `INSERT INTO pedidos (id,numero,cotizacionId,terceroId,sedeId,fecha,subtotal,iva,total,estado,items)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [id, numero, cotizacionId, cot.terceroId, cot.sedeId, fecha, subtotal, iva, total, "pendiente", JSON.stringify(items)]
+      `INSERT INTO pedidos (id,numero,cotizacionId,terceroId,sedeId,fecha,subtotal,iva,total,estado,items,"tenantId")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [id, numero, cotizacionId, cot.terceroId, cot.sedeId, fecha, subtotal, iva, total, "pendiente", JSON.stringify(items), tx.tenantId]
     );
     await tx.query("UPDATE cotizaciones SET estado = 'convertida' WHERE id = $1", [cotizacionId]);
     await pushAuditTx(tx, actor, "Convertir cotizacion a pedido", `${cot.numero} -> ${numero}`);
     return { id, numero, cotizacionId, terceroId: cot.terceroId, sedeId: cot.sedeId, fecha, items, subtotal, iva, total, estado: "pendiente" };
-  });
+  }, actor?.tenantId);
 }
 
 export async function generarRemision(actor, { pedidoId, bodegaId }) {
@@ -645,8 +645,8 @@ export async function generarRemision(actor, { pedidoId, bodegaId }) {
     const numero = await nextConsecutivoTx(tx, "remision", "REM");
     const id = nid("rem");
     await tx.query(
-      "INSERT INTO remisiones (id,numero,pedidoId,terceroId,bodegaId,fecha,items,estado) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-      [id, numero, pedidoId, ped.terceroId, bodegaId, fecha, JSON.stringify(items), "entregada"]
+      `INSERT INTO remisiones (id,numero,pedidoId,terceroId,bodegaId,fecha,items,estado,"tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id, numero, pedidoId, ped.terceroId, bodegaId, fecha, JSON.stringify(items), "entregada", tx.tenantId]
     );
     await tx.query("UPDATE pedidos SET estado = 'remisionado' WHERE id = $1", [pedidoId]);
     for (const it of items) {
@@ -657,7 +657,7 @@ export async function generarRemision(actor, { pedidoId, bodegaId }) {
     }
     await pushAuditTx(tx, actor, "Generar remision", `${numero} de pedido ${ped.numero}`);
     return { id, numero, pedidoId, terceroId: ped.terceroId, bodegaId, fecha, items, estado: "entregada" };
-  });
+  }, actor?.tenantId);
 }
 
 export async function generarFactura(actor, { remisionId }) {
@@ -674,10 +674,10 @@ export async function generarFactura(actor, { remisionId }) {
     const id = nid("fac");
     const vencimiento = addDays(fecha, tercero.condicionPagoDias || 0).slice(0, 10);
     await tx.query(
-      `INSERT INTO facturas (id,numero,remisionId,pedidoId,terceroId,sedeId,fecha,vencimiento,subtotal,iva,total,saldo,estado,estadoDian,items,pagos)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      `INSERT INTO facturas (id,numero,remisionId,pedidoId,terceroId,sedeId,fecha,vencimiento,subtotal,iva,total,saldo,estado,estadoDian,items,pagos,"tenantId")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [id, numero, remisionId, ped.id, rem.terceroId, ped.sedeId, fecha, vencimiento,
-       ped.subtotal, ped.iva, ped.total, ped.total, "pendiente", "borrador", JSON.stringify(items), "[]"]
+       ped.subtotal, ped.iva, ped.total, ped.total, "pendiente", "borrador", JSON.stringify(items), "[]", tx.tenantId]
     );
     await tx.query("UPDATE terceros SET saldoCartera = saldoCartera + $1 WHERE id = $2", [ped.total, rem.terceroId]);
     await crearComprobanteSQLTx(tx, {
@@ -707,7 +707,7 @@ export async function generarFactura(actor, { remisionId }) {
     await pushAuditTx(tx, actor, "Emitir factura de venta", `${numero} por ${fmtCOP(ped.total)}`);
     return { id, numero, remisionId, pedidoId: ped.id, terceroId: rem.terceroId, sedeId: ped.sedeId, fecha, vencimiento,
       items, subtotal: ped.subtotal, iva: ped.iva, total: ped.total, saldo: ped.total, estado: "pendiente", estadoDian: "borrador", cufe: null, pagos: [] };
-  });
+  }, actor?.tenantId);
 }
 
 export async function registrarRecibo(actor, { facturaId, monto, medioPago, cajaBancoId, fecha }) {
@@ -728,8 +728,8 @@ export async function registrarRecibo(actor, { facturaId, monto, medioPago, caja
     const cb = await tx.queryOne("SELECT * FROM cajasBancos WHERE id = $1", [cajaBancoId]);
     if (cb) await tx.query("UPDATE cajasBancos SET saldo = saldo + $1 WHERE id = $2", [monto, cajaBancoId]);
     await tx.query(
-      "INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES ($1,$2,$3,$4,$5,$6)",
-      [nid("mvt"), cajaBancoId, "ingreso", `Recibo de caja ${numero} - Factura ${fac.numero}`, monto, f]
+      `INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha, "tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [nid("mvt"), cajaBancoId, "ingreso", `Recibo de caja ${numero} - Factura ${fac.numero}`, monto, f, tx.tenantId]
     );
     const tercero = await tx.queryOne("SELECT nombre FROM terceros WHERE id = $1", [fac.terceroId]);
     await crearComprobanteSQLTx(tx, {
@@ -742,7 +742,7 @@ export async function registrarRecibo(actor, { facturaId, monto, medioPago, caja
     });
     await pushAuditTx(tx, actor, "Registrar recibo de caja", `${numero} por ${fmtCOP(monto)} sobre ${fac.numero}`);
     return recibo;
-  });
+  }, actor?.tenantId);
 }
 
 export async function anularFactura(actor, { id: facturaId, motivo }) {
@@ -766,7 +766,7 @@ export async function anularFactura(actor, { id: facturaId, motivo }) {
     });
     await pushAuditTx(tx, actor, "Anular factura", `${fac.numero}. Motivo: ${motivo}`);
     return fac;
-  });
+  }, actor?.tenantId);
 }
 
 /* ====== COMPRAS ====== */
@@ -783,12 +783,12 @@ export async function crearOrdenCompra(actor, { proveedorId, sedeId, bodegaId, i
     }
     const total = itemsEnq.reduce((s, i) => s + i.cantidad * i.costoUnitario, 0);
     await tx.query(
-      "INSERT INTO ordenesCompra (id,numero,proveedorId,sedeId,bodegaId,fecha,total,estado,recibidoItems,items) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-      [id, numero, proveedorId, sedeId, bodegaId, fecha, total, "pendiente", "{}", JSON.stringify(itemsEnq)]
+      `INSERT INTO ordenesCompra (id,numero,proveedorId,sedeId,bodegaId,fecha,total,estado,recibidoItems,items,"tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [id, numero, proveedorId, sedeId, bodegaId, fecha, total, "pendiente", "{}", JSON.stringify(itemsEnq), tx.tenantId]
     );
     await pushAuditTx(tx, actor, "Crear orden de compra", `${numero} por ${fmtCOP(total)}`);
     return { id, numero, proveedorId, sedeId, bodegaId, fecha, items: itemsEnq, total, estado: "pendiente", recibidoItems: {} };
-  });
+  }, actor?.tenantId);
 }
 
 export async function recibirOrdenCompra(actor, { ocId, items: itemsRecibidos }) {
@@ -813,10 +813,10 @@ export async function recibirOrdenCompra(actor, { ocId, items: itemsRecibidos })
       return { ...it, nombre: itemOC?.nombre, codigo: itemOC?.codigo };
     });
     const id = nid("rcp");
-    await tx.query("INSERT INTO recepciones (id,numero,ocId,fecha,items) VALUES ($1,$2,$3,$4,$5)", [id, numero, ocId, fecha, JSON.stringify(itemsEnq)]);
+    await tx.query(`INSERT INTO recepciones (id,numero,ocId,fecha,items,"tenantId") VALUES ($1,$2,$3,$4,$5,$6)`, [id, numero, ocId, fecha, JSON.stringify(itemsEnq), tx.tenantId]);
     await pushAuditTx(tx, actor, "Recibir orden de compra", `${numero} sobre ${oc.numero}`);
     return { id, numero, ocId, items: itemsEnq, fecha };
-  });
+  }, actor?.tenantId);
 }
 
 export async function generarFacturaCompra(actor, { recepcionId }) {
@@ -837,9 +837,9 @@ export async function generarFacturaCompra(actor, { recepcionId }) {
     const total = subtotal + iva;
     const vencimiento = addDays(fecha, prov.condicionPagoDias || 30).slice(0, 10);
     await tx.query(
-      `INSERT INTO facturasCompra (id,numero,recepcionId,ocId,proveedorId,fecha,vencimiento,subtotal,iva,total,saldo,estado,items)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-      [id, numero, recepcionId, oc.id, oc.proveedorId, fecha, vencimiento, subtotal, iva, total, total, "pendiente", JSON.stringify(itemsRcp)]
+      `INSERT INTO facturasCompra (id,numero,recepcionId,ocId,proveedorId,fecha,vencimiento,subtotal,iva,total,saldo,estado,items,"tenantId")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [id, numero, recepcionId, oc.id, oc.proveedorId, fecha, vencimiento, subtotal, iva, total, total, "pendiente", JSON.stringify(itemsRcp), tx.tenantId]
     );
     await tx.query("UPDATE terceros SET saldoCxP = saldoCxP + $1 WHERE id = $2", [total, oc.proveedorId]);
     await crearComprobanteSQLTx(tx, {
@@ -853,7 +853,7 @@ export async function generarFacturaCompra(actor, { recepcionId }) {
     });
     await pushAuditTx(tx, actor, "Registrar factura de compra", `${numero} por ${fmtCOP(total)}`);
     return { id, numero, recepcionId, ocId: oc.id, proveedorId: oc.proveedorId, fecha, vencimiento, items: itemsRcp, subtotal, iva, total, saldo: total, estado: "pendiente" };
-  });
+  }, actor?.tenantId);
 }
 
 export async function pagarFacturaCompra(actor, { facturaCompraId, monto, cajaBancoId, fecha }) {
@@ -871,8 +871,8 @@ export async function pagarFacturaCompra(actor, { facturaCompraId, monto, cajaBa
     const cb = await tx.queryOne("SELECT * FROM cajasBancos WHERE id = $1", [cajaBancoId]);
     if (cb) await tx.query("UPDATE cajasBancos SET saldo = saldo - $1 WHERE id = $2", [monto, cajaBancoId]);
     await tx.query(
-      "INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES ($1,$2,$3,$4,$5,$6)",
-      [nid("mvt"), cajaBancoId, "egreso", `Comprobante de egreso ${numero} - Factura compra ${fc.numero}`, monto, f]
+      `INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha, "tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [nid("mvt"), cajaBancoId, "egreso", `Comprobante de egreso ${numero} - Factura compra ${fc.numero}`, monto, f, tx.tenantId]
     );
     const prov = await tx.queryOne("SELECT nombre FROM terceros WHERE id = $1", [fc.proveedorId]);
     await crearComprobanteSQLTx(tx, {
@@ -885,7 +885,7 @@ export async function pagarFacturaCompra(actor, { facturaCompraId, monto, cajaBa
     });
     await pushAuditTx(tx, actor, "Pagar factura de compra", `${numero} por ${fmtCOP(monto)}`);
     return { numero, monto };
-  });
+  }, actor?.tenantId);
 }
 
 /* ====== INVENTARIO / TESORERIA / CONTABILIDAD ====== */
@@ -898,7 +898,7 @@ export async function ajusteInventario(actor, { productoId, bodegaId, cantidad, 
     const prod = await tx.queryOne("SELECT nombre FROM productos WHERE id = $1", [productoId]);
     await pushAuditTx(tx, actor, "Ajuste de inventario", `${tipo} de ${cantidad} und. de ${prod?.nombre}. Motivo: ${motivo}`);
     return { ok: true };
-  });
+  }, actor?.tenantId);
 }
 
 export async function transferenciaInventario(actor, { productoId, origenBodegaId, destinoBodegaId, cantidad }) {
@@ -912,7 +912,7 @@ export async function transferenciaInventario(actor, { productoId, origenBodegaI
     const prod = await tx.queryOne("SELECT nombre FROM productos WHERE id = $1", [productoId]);
     await pushAuditTx(tx, actor, "Transferencia de inventario", `${cantidad} und. de ${prod?.nombre}`);
     return { ok: true };
-  });
+  }, actor?.tenantId);
 }
 
 export async function registrarMovimientoTesoreriaManual(actor, { cajaBancoId, tipo, concepto, monto, cuentaContrapartida }) {
@@ -925,8 +925,8 @@ export async function registrarMovimientoTesoreriaManual(actor, { cajaBancoId, t
     const numero = await nextConsecutivoTx(tx, tipo === "ingreso" ? "reciboCaja" : "egreso", tipo === "ingreso" ? "RC" : "CE");
     await tx.query("UPDATE cajasBancos SET saldo = saldo + $1 WHERE id = $2", [tipo === "ingreso" ? monto : -monto, cajaBancoId]);
     await tx.query(
-      "INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES ($1,$2,$3,$4,$5,$6)",
-      [nid("mvt"), cajaBancoId, tipo, `${numero} — ${concepto}`, monto, fecha]
+      `INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha, "tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [nid("mvt"), cajaBancoId, tipo, `${numero} — ${concepto}`, monto, fecha, tx.tenantId]
     );
     const cuentaCaja = cb.tipo === "caja" ? "1105" : "1110";
     const c = await tx.queryOne("SELECT nombre FROM planCuentas WHERE codigo = $1", [cuentaContrapartida]);
@@ -936,7 +936,7 @@ export async function registrarMovimientoTesoreriaManual(actor, { cajaBancoId, t
     await crearComprobanteSQLTx(tx, { tipo: tipo === "ingreso" ? "Recibo de caja" : "Comprobante de egreso", fecha, origen: { tipo: "manual" }, glosa: concepto, lineas });
     await pushAuditTx(tx, actor, tipo === "ingreso" ? "Registrar ingreso de tesoreria" : "Registrar egreso de tesoreria", `${numero} por ${fmtCOP(monto)} — ${concepto}`);
     return { numero };
-  });
+  }, actor?.tenantId);
 }
 
 export async function transferenciaTesoreria(actor, { origenId, destinoId, monto }) {
@@ -950,15 +950,15 @@ export async function transferenciaTesoreria(actor, { origenId, destinoId, monto
     const fecha = todayISO();
     await tx.query("UPDATE cajasBancos SET saldo = saldo - $1 WHERE id = $2", [monto, origenId]);
     await tx.query("UPDATE cajasBancos SET saldo = saldo + $1 WHERE id = $2", [monto, destinoId]);
-    await tx.query("INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES ($1,$2,$3,$4,$5,$6)", [nid("mvt"), origenId, "egreso", `Transferencia a ${destino.nombre}`, monto, fecha]);
-    await tx.query("INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha) VALUES ($1,$2,$3,$4,$5,$6)", [nid("mvt"), destinoId, "ingreso", `Transferencia desde ${origen.nombre}`, monto, fecha]);
+    await tx.query(`INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha, "tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7)`, [nid("mvt"), origenId, "egreso", `Transferencia a ${destino.nombre}`, monto, fecha, tx.tenantId]);
+    await tx.query(`INSERT INTO movimientosTesoreria (id, cajaBancoId, tipo, concepto, monto, fecha, "tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7)`, [nid("mvt"), destinoId, "ingreso", `Transferencia desde ${origen.nombre}`, monto, fecha, tx.tenantId]);
     await crearComprobanteSQLTx(tx, {
       tipo: "Transferencia entre cuentas", fecha, origen: { tipo: "transferencia" }, glosa: `Transferencia de ${origen.nombre} a ${destino.nombre}`,
       lineas: [{ cuenta: destino.tipo === "caja" ? "1105" : "1110", nombre: destino.tipo === "caja" ? "Caja general" : "Bancos - Cta corriente", tercero: "-", debito: monto, credito: 0 }, { cuenta: origen.tipo === "caja" ? "1105" : "1110", nombre: origen.tipo === "caja" ? "Caja general" : "Bancos - Cta corriente", tercero: "-", debito: 0, credito: monto }],
     });
     await pushAuditTx(tx, actor, "Transferencia entre cuentas", `${fmtCOP(monto)} de ${origen.nombre} a ${destino.nombre}`);
     return { ok: true };
-  });
+  }, actor?.tenantId);
 }
 
 export async function crearComprobanteManual(actor, { tipo, fecha, glosa, lineas }) {
@@ -970,7 +970,7 @@ export async function crearComprobanteManual(actor, { tipo, fecha, glosa, lineas
     const comp = await crearComprobanteSQLTx(tx, { tipo, fecha, origen: { tipo: "manual" }, glosa, lineas });
     await pushAuditTx(tx, actor, "Registrar comprobante manual", `${comp.numero} - ${glosa}`);
     return comp;
-  });
+  }, actor?.tenantId);
 }
 
 export async function liquidarNomina(actor, { periodo, empleadoIds }) {
@@ -996,12 +996,12 @@ export async function liquidarNomina(actor, { periodo, empleadoIds }) {
       const prest = ces + prima + vac + intC;
       const id = nid("nom");
       await tx.query(
-        `INSERT INTO nominas (id,periodo,fecha,empleadoId,empleadoNombre,cargo,salarioBase,auxTransporte,deducciones,deduccionesTotal,netoPagar,aportesPatronales,aportesPatronalesTotal,prestaciones,prestacionesTotal,costoTotalEmpresa)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        `INSERT INTO nominas (id,periodo,fecha,empleadoId,empleadoNombre,cargo,salarioBase,auxTransporte,deducciones,deduccionesTotal,netoPagar,aportesPatronales,aportesPatronalesTotal,prestaciones,prestacionesTotal,costoTotalEmpresa,"tenantId")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
         [id, periodo, fecha, emp.id, emp.nombre, emp.cargo, s, aux,
          JSON.stringify({ salud: sEmp, pension: pEmp, fsp }), ded, neto,
          JSON.stringify({ salud: sPat, pension: pPat, arl, sena, icbf, ccf }), aportes,
-         JSON.stringify({ cesantias: ces, prima, vacaciones: vac, intCesantias: intC }), prest, s + aux + aportes + prest]
+         JSON.stringify({ cesantias: ces, prima, vacaciones: vac, intCesantias: intC }), prest, s + aux + aportes + prest, tx.tenantId]
       );
       nominasGen.push({ id, periodo, fecha, empleadoId: emp.id, empleadoNombre: emp.nombre, cargo: emp.cargo, salarioBase: s, auxTransporte: aux,
         deducciones: { salud: sEmp, pension: pEmp, fsp }, deduccionesTotal: ded, netoPagar: neto,
@@ -1024,7 +1024,7 @@ export async function liquidarNomina(actor, { periodo, empleadoIds }) {
     }
     await pushAuditTx(tx, actor, "Liquidar nomina", `Periodo ${periodo} — ${nominasGen.length} empleado(s)`);
     return { nominas: nominasGen };
-  });
+  }, actor?.tenantId);
 }
 
 export async function simularRespuestaDian(actor, { id: facturaId }) {
@@ -1037,7 +1037,7 @@ export async function simularRespuestaDian(actor, { id: facturaId }) {
     await tx.query("UPDATE facturas SET estadoDian = $1, cufe = $2 WHERE id = $3", [estadoDian, cufe, facturaId]);
     await pushAuditTx(tx, actor, "Simular respuesta DIAN (sandbox)", `${fac.numero}: ${estadoDian}`);
     return { estadoDian, cufe };
-  });
+  }, actor?.tenantId);
 }
 
 /* ---------- Exportar todas las funciones ---------- */

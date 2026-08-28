@@ -110,9 +110,23 @@ function mapRow(row, tableConfig) {
   return result;
 }
 
-export async function loadFullStatePG() {
+/**
+ * tenantId es OBLIGATORIO aca (a diferencia de db.transaction, que lo trata
+ * como opcional para las migraciones): estos dos endpoints (/api/estado
+ * GET/PUT) leen y sobreescriben TODAS las tablas de negocio de un tenant de
+ * una sola vez, y saveFullStatePG hace un DELETE por tabla antes de
+ * reinsertar - sin un tenantId real para acotar ese DELETE, un guardado de
+ * cualquier empresa borraria los datos de TODAS las empresas (ver
+ * index.js, que rechaza la llamada si el usuario autenticado no tiene
+ * tenantId - hoy eso es solo el superadmin de plataforma, que no deberia
+ * usar el sync de estado completo de una empresa puntual de todas formas).
+ */
+export async function loadFullStatePG(tenantId) {
+  if (!tenantId) throw new Error("loadFullStatePG requiere un tenantId.");
   const client = await pool.connect();
   try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
     const state = { consecutivos: {} };
 
     for (const [table, config] of Object.entries(TABLES)) {
@@ -131,16 +145,22 @@ export async function loadFullStatePG() {
       }
     }
 
+    await client.query("COMMIT");
     return state;
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
     client.release();
   }
 }
 
-export async function saveFullStatePG(data) {
+export async function saveFullStatePG(data, tenantId) {
+  if (!tenantId) throw new Error("saveFullStatePG requiere un tenantId.");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
 
     const orderedTables = [
       "nominas", "comprobantes", "auditLog",
@@ -153,16 +173,24 @@ export async function saveFullStatePG(data) {
       "usuarios",
     ];
 
+    // DELETE acotado por tenantId: sin el WHERE, esto borraria la tabla
+    // entera (todos los tenants). RLS ya filtraria las lecturas, pero un
+    // DELETE FROM sin WHERE no depende de RLS para decidir que filas
+    // toca - toca todas las que la politica deja ver, y con FORCE ROW
+    // LEVEL SECURITY activo (migracion 002) eso ya esta acotado al tenant
+    // actual de la sesion - el WHERE explicito es una segunda capa
+    // (defensa en profundidad) por si alguna vez se corre esto con un rol
+    // que bypasea RLS.
     for (const table of orderedTables) {
       if (Object.prototype.hasOwnProperty.call(data, table)) {
-        await client.query(`DELETE FROM ${table}`);
+        await client.query(`DELETE FROM ${table} WHERE "tenantId" = $1`, [tenantId]);
       }
     }
     if (Object.prototype.hasOwnProperty.call(data, CONSECUTIVOS_TABLE)) {
-      await client.query(`DELETE FROM ${CONSECUTIVOS_TABLE}`);
+      await client.query(`DELETE FROM ${CONSECUTIVOS_TABLE} WHERE "tenantId" = $1`, [tenantId]);
     }
     if (Object.prototype.hasOwnProperty.call(data, "productos")) {
-      await client.query(`DELETE FROM ${STOCK_TABLE}`);
+      await client.query(`DELETE FROM ${STOCK_TABLE} WHERE "tenantId" = $1`, [tenantId]);
     }
 
     for (const [table, config] of Object.entries(TABLES)) {
@@ -171,22 +199,29 @@ export async function saveFullStatePG(data) {
       if (rows.length === 0) continue;
 
       const cols = Object.keys(rows[0])
-        .filter((c) => !config.exclude?.includes(c))
+        .filter((c) => !config.exclude?.includes(c) && c !== "tenantId")
         .map((c) => {
           const reverse = Object.entries(config.colMap || {}).find(([, v]) => v === c);
           return reverse ? reverse[0] : c;
         });
+      // "tenantId" SIEMPRE se fija server-side con el tenant del usuario
+      // autenticado, nunca con lo que venga en el payload - de lo
+      // contrario un cliente malicioso (o un bug de frontend) podria
+      // escribir filas en el tenant de otra empresa con solo mandar un
+      // tenantId distinto en el JSON.
+      cols.push('"tenantId"');
 
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
       const insertSQL = `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`;
 
       for (const row of rows) {
-        const values = cols.map((c) => {
+        const values = cols.slice(0, -1).map((c) => {
           const jsKey = config.colMap?.[c] || c;
           let val = row[jsKey];
           if (config.jsonCols?.includes(jsKey)) val = jsonCol(val);
           return val;
         });
+        values.push(tenantId);
         await client.query(insertSQL, values);
       }
     }
@@ -194,8 +229,8 @@ export async function saveFullStatePG(data) {
     if (data.consecutivos) {
       for (const [tipo, valor] of Object.entries(data.consecutivos)) {
         await client.query(
-          "INSERT INTO consecutivos (tipo, valor) VALUES ($1, $2) ON CONFLICT (tipo) DO UPDATE SET valor = $2",
-          [tipo, valor]
+          `INSERT INTO consecutivos ("tenantId", tipo, valor) VALUES ($1, $2, $3) ON CONFLICT ("tenantId", tipo) DO UPDATE SET valor = $3`,
+          [tenantId, tipo, valor]
         );
       }
     }
@@ -204,8 +239,8 @@ export async function saveFullStatePG(data) {
       if (p.stock) {
         for (const [bodegaId, cantidad] of Object.entries(p.stock)) {
           await client.query(
-            "INSERT INTO productoStock (productoId, bodegaId, cantidad) VALUES ($1, $2, $3) ON CONFLICT (productoId, bodegaId) DO UPDATE SET cantidad = $3",
-            [p.id, bodegaId, cantidad]
+            `INSERT INTO productoStock ("tenantId", productoId, bodegaId, cantidad) VALUES ($1, $2, $3, $4) ON CONFLICT ("tenantId", productoId, bodegaId) DO UPDATE SET cantidad = $4`,
+            [tenantId, p.id, bodegaId, cantidad]
           );
         }
       }

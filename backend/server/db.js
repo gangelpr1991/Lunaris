@@ -117,17 +117,39 @@ export async function queryOne(sql, params = []) {
  * conexion en transaccion (NO usar el query()/queryOne() de arriba adentro
  * del callback, romperia el aislamiento).
  */
-export async function transaction(callback) {
+/**
+ * tenantId (opcional): si se pasa, queda activo para TODA la transaccion
+ * via `set_config('app.current_tenant_id', ..., true)` - el `true` final es
+ * el flag "is_local" de Postgres, que hace que el valor se resetee solo al
+ * terminar la transaccion (COMMIT o ROLLBACK), sin filtrar a la proxima vez
+ * que este mismo cliente pooled se reutilice para otra request.
+ *
+ * Esto es lo que hace que las politicas RLS de la migracion 002
+ * (tenant_isolation, ver migrations.js) filtren de verdad: sin este SET, el
+ * current_setting() que lee cada politica siempre devuelve NULL/'' y esa
+ * politica lo interpreta como "sin tenant activo -> ver todo" (el modo
+ * superadmin de plataforma) para CUALQUIER conexion, no solo para el
+ * superadmin real. Omitir tenantId (o pasar '') es exactamente ese modo
+ * superadmin/plataforma - lo usan las migraciones y el bootstrap de admin.
+ */
+export async function transaction(callback, tenantId) {
   if (!usePG) {
     throw new Error("SQLite no está soportado");
   }
   const client = await pgPool.connect();
+  // tx.tenantId queda disponible para cualquier helper que reciba `tx` (
+  // pushAuditTx, nextConsecutivoTx, crearComprobanteSQLTx,
+  // moverInventarioSQLTx) sin tener que agregarles un parametro nuevo a
+  // cada uno - todos ya reciben `tx`, y el valor coincide exactamente con
+  // el que se acaba de fijar en la sesion de Postgres via set_config.
   const tx = {
     query: async (sql, params = []) => camelizeRows((await client.query(sql, params)).rows),
     queryOne: async (sql, params = []) => camelizeRow((await client.query(sql, params)).rows[0]) || null,
+    tenantId: tenantId || null,
   };
   try {
     await client.query("BEGIN");
+    await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId || ""]);
     const result = await callback(tx);
     await client.query("COMMIT");
     return result;

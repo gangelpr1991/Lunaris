@@ -16,7 +16,7 @@ export function comparePassword(password, hash) {
 
 export function generateToken(user) {
   return jwt.sign(
-    { id: user.id, email: user.email, rol: user.rol, nombre: user.nombre },
+    { id: user.id, email: user.email, rol: user.rol, nombre: user.nombre, tenantId: user.tenantId ?? null },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
   );
@@ -30,15 +30,18 @@ export async function findUserByEmail(email) {
   return await db.queryOne("SELECT * FROM usuarios WHERE email = $1 AND activo = 1", [email]);
 }
 
-export async function createUser({ email, password, nombre, rol }) {
+export async function createUser({ email, password, nombre, rol, tenantId }) {
   const id = "usr-" + Math.random().toString(36).slice(2, 10);
   const hash = hashPassword(password);
   const createdAt = new Date().toISOString();
+  // tenantId ausente/null = usuario de plataforma ("superadmin", ve todas
+  // las empresas). Un admin_empresa u otro rol normal SIEMPRE debe crearse
+  // con un tenantId real (ver crearTenant en business.js).
   await db.query(
-    "INSERT INTO usuarios (id, email, password_hash, nombre, rol, activo, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-    [id, email, hash, nombre, rol, 1, createdAt]
+    `INSERT INTO usuarios (id, email, password_hash, nombre, rol, activo, created_at, "tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [id, email, hash, nombre, rol, 1, createdAt, tenantId ?? null]
   );
-  return { id, email, nombre, rol, activo: true, created_at: createdAt };
+  return { id, email, nombre, rol, activo: true, created_at: createdAt, tenantId: tenantId ?? null };
 }
 
 export async function ensureDefaultAdmin() {
@@ -66,8 +69,8 @@ export async function authMiddleware(req, res, next) {
     if (!user) {
       return res.status(401).json({ ok: false, error: "Usuario no encontrado o desactivado." });
     }
-    req.user = { id: user.id, email: user.email, rol: user.rol, nombre: user.nombre };
-    req.actor = { usuario: user.nombre, rol: user.rol };
+    req.user = { id: user.id, email: user.email, rol: user.rol, nombre: user.nombre, tenantId: user.tenantId ?? null };
+    req.actor = { usuario: user.nombre, rol: user.rol, tenantId: user.tenantId ?? null };
     next();
   } catch (e) {
     if (e.name === "TokenExpiredError") {
