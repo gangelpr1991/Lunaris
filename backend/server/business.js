@@ -439,10 +439,11 @@ export async function getBodegas() {
 }
 
 export async function createBodega(data) {
+  if (!data.tenantId) throw new Error("createBodega requiere tenantId.");
   const id = nid("bod");
   await db.query(
-    "INSERT INTO bodegas (id, nombre, sedeId) VALUES ($1, $2, $3)",
-    [id, data.nombre, data.sedeId || null]
+    `INSERT INTO bodegas (id, nombre, sedeId, "tenantId") VALUES ($1, $2, $3, $4)`,
+    [id, data.nombre, data.sedeId || null, data.tenantId]
   );
   return await db.queryOne("SELECT * FROM bodegas WHERE id = $1", [id]);
 }
