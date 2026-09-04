@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import {
   LayoutDashboard, Users, Receipt, Store, Wallet2, ShoppingCart,
   Boxes, Landmark, Calculator, BadgeCheck, UserCog, FileBarChart,
-  History, Smartphone, Puzzle, Settings,
+  History, Smartphone, Puzzle, Settings, Building2,
   Menu, Search, Bell, Sun, Moon, HelpCircle, AlertTriangle, ChevronsUpDown, LogOut
 } from "lucide-react";
 import { BRAND, ESTADO_MODULO_BADGE, SEDES, ROLES, puedeVer, cx } from "../../data/constants.js";
@@ -38,6 +38,14 @@ const NAV = [
     { key: "movil", label: "Vista movil / PWA", icon: Smartphone, estado: "funcional" },
     { key: "integraciones", label: "Integraciones", icon: Puzzle, estado: "funcional" },
     { key: "configuracion", label: "Configuracion", icon: Settings, estado: "funcional" },
+  ]},
+  // soloSuperadmin: a diferencia del resto de los items (filtrados con
+  // puedeVer, que ya deja pasar tanto a superadmin como a admin_empresa),
+  // este grupo es exclusivo del superadmin de PLATAFORMA - un
+  // admin_empresa administra su propia empresa, no puede crear otras (ver
+  // backend/server/auth.js, PERMISOS_ACCION.CREAR_EMPRESA).
+  { group: "Plataforma", items: [
+    { key: "plataforma", label: "Empresas", icon: Building2, estado: "funcional", soloSuperadmin: true },
   ]},
 ];
 
@@ -78,7 +86,7 @@ export function Sidebar({ current, setCurrent, collapsed, setCollapsed, role, mo
         </div>
         <nav className="flex-1 py-3 px-2.5 space-y-4">
           {NAV.map((g) => {
-            const visibles = g.items.filter((i) => puedeVer(role, i.key));
+            const visibles = g.items.filter((i) => (i.soloSuperadmin ? role === "superadmin" : puedeVer(role, i.key)));
             if (visibles.length === 0) return null;
             return (
               <div key={g.group}>

@@ -29,5 +29,10 @@ export const api = {
   accion: (type, payload) =>
     request("/accion", { method: "POST", body: JSON.stringify({ type, payload }) }),
 
+  // Solo superadmin de plataforma (tenantId null en su usuario) - lista y
+  // crea empresas. Crear una empresa tambien pasa por /accion (tipo
+  // CREAR_EMPRESA), como cualquier otra accion de negocio.
+  getTenants: () => request("/tenants"),
+
   health: () => request("/health"),
 };
