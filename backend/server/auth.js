@@ -113,6 +113,10 @@ const PERMISOS_ACCION = {
   TRANSFERENCIA_TESORERIA: ["superadmin", "admin_empresa", "cajero_pos", "contador", "gerente"],
   LIQUIDAR_NOMINA: ["superadmin", "admin_empresa", "talento_humano", "contador", "gerente"],
   SIMULAR_DIAN: ["superadmin", "admin_empresa", "contador", "gerente"],
+  // Crear una empresa (tenant) nueva es exclusivo del superadmin de
+  // plataforma - un admin_empresa administra SU empresa, no puede crear
+  // otras.
+  CREAR_EMPRESA: ["superadmin"],
 };
 
 export function requireActionRole(action) {

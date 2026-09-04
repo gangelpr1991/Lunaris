@@ -1,4 +1,5 @@
 import db from "./db.js";
+import { hashPassword } from "./auth.js";
 
 let __idSeq = 10000;
 const nid = (p) => `${p}-${(__idSeq++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -455,10 +456,11 @@ export async function getSedes() {
 }
 
 export async function createSede(data) {
+  if (!data.tenantId) throw new Error("createSede requiere tenantId.");
   const id = nid("sed");
   await db.query(
-    "INSERT INTO sedes (id, nombre, ciudad) VALUES ($1, $2, $3)",
-    [id, data.nombre, data.ciudad || null]
+    `INSERT INTO sedes (id, nombre, ciudad, "tenantId") VALUES ($1, $2, $3, $4)`,
+    [id, data.nombre, data.ciudad || null, data.tenantId]
   );
   return await db.queryOne("SELECT * FROM sedes WHERE id = $1", [id]);
 }
@@ -1041,6 +1043,82 @@ export async function simularRespuestaDian(actor, { id: facturaId }) {
   }, actor?.tenantId);
 }
 
+/* ====== TENANTS (empresas) - solo superadmin de plataforma ====== */
+
+// Cuentas minimas del PUC colombiano que las partidas contables automaticas
+// de este archivo ya dan por hechas (facturar, pagar, liquidar nomina...) -
+// sin sembrarlas al crear la empresa, la primera factura o pago fallaria
+// buscando una cuenta que no existe para ese tenant.
+const PLAN_CUENTAS_BASE = [
+  ["1105", "Caja general", "Activo", "Debito"],
+  ["1110", "Bancos - Cta corriente", "Activo", "Debito"],
+  ["1305", "Clientes nacionales (CxC)", "Activo", "Debito"],
+  ["1435", "Inventario de mercancias", "Activo", "Debito"],
+  ["2205", "Proveedores nacionales (CxP)", "Pasivo", "Credito"],
+  ["2408", "IVA por pagar (generado)", "Pasivo", "Credito"],
+  ["2409", "IVA descontable (compras)", "Activo", "Debito"],
+  ["2505", "Salarios y prestaciones por pagar", "Pasivo", "Credito"],
+  ["4135", "Ingresos por venta de mercancia", "Ingreso", "Credito"],
+  ["5105", "Gastos de personal", "Gasto", "Debito"],
+  ["6135", "Costo de venta de mercancia", "Costo", "Debito"],
+];
+
+/**
+ * Crea una empresa (tenant) nueva junto con su primer usuario
+ * administrador y los datos minimos para que no arranque completamente
+ * vacia (sede, bodega, caja, empresa y plan de cuentas basico). Corre SIN
+ * tenantId (modo plataforma/bypass de RLS) porque el tenant todavia no
+ * existe cuando arranca la transaccion - cada INSERT fija el tenantId
+ * recien generado a mano, no via tx.tenantId (que aca queda null).
+ */
+export async function crearTenant(actor, { nombre, slug, adminNombre, adminEmail, adminPassword }) {
+  return await db.transaction(async (tx) => {
+    const slugExiste = await tx.queryOne("SELECT id FROM tenants WHERE slug = $1", [slug]);
+    if (slugExiste) return { error: `Ya existe una empresa con el identificador "${slug}".` };
+    const emailExiste = await tx.queryOne("SELECT id FROM usuarios WHERE email = $1", [adminEmail]);
+    if (emailExiste) return { error: `Ya existe un usuario con el email ${adminEmail}.` };
+
+    const tenantId = nid("tnt");
+    const fecha = todayISO();
+    await tx.query(
+      "INSERT INTO tenants (id, slug, nombre, activo, created_at) VALUES ($1,$2,$3,$4,$5)",
+      [tenantId, slug, nombre, 1, fecha]
+    );
+
+    const userId = "usr-" + Math.random().toString(36).slice(2, 10);
+    await tx.query(
+      `INSERT INTO usuarios (id, email, password_hash, nombre, rol, activo, created_at, "tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [userId, adminEmail, hashPassword(adminPassword), adminNombre, "admin_empresa", 1, fecha, tenantId]
+    );
+
+    const sedeId = nid("sed");
+    await tx.query(`INSERT INTO sedes (id, nombre, ciudad, "tenantId") VALUES ($1,$2,$3,$4)`, [sedeId, "Sede principal", "", tenantId]);
+    const bodegaId = nid("bod");
+    await tx.query(`INSERT INTO bodegas (id, nombre, sedeId, "tenantId") VALUES ($1,$2,$3,$4)`, [bodegaId, "Bodega principal", sedeId, tenantId]);
+    const cajaId = nid("cja");
+    await tx.query(`INSERT INTO cajasBancos (id, tipo, nombre, sedeId, saldo, "tenantId") VALUES ($1,$2,$3,$4,$5,$6)`, [cajaId, "caja", "Caja general", sedeId, 0, tenantId]);
+    await tx.query(
+      `INSERT INTO empresa (id, razonSocial, nit, responsabilidad, direccion, telefono, email, moneda, zonaHoraria, "tenantId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [nid("emp"), nombre, "", "", "", "", adminEmail, "COP", "America/Bogota", tenantId]
+    );
+    // planCuentas SIN comillas: la tabla se creo como `planCuentas` sin
+    // comillas en el CREATE TABLE original, asi que Postgres la plego a
+    // minusculas de verdad (plancuentas) - citarla aca la rompe (busca el
+    // nombre literal mixed-case, que no existe). Mismo bug que ya se
+    // encontro y corrigio en migrations.js.
+    for (const [codigo, nombreCta, clase, naturaleza] of PLAN_CUENTAS_BASE) {
+      await tx.query(`INSERT INTO plancuentas ("tenantId", codigo, nombre, clase, naturaleza) VALUES ($1,$2,$3,$4,$5)`, [tenantId, codigo, nombreCta, clase, naturaleza]);
+    }
+
+    await pushAuditTx({ ...tx, tenantId }, actor, "Crear empresa (tenant)", `${nombre} (${slug})`);
+    return { tenantId, slug, nombre, sedeId, bodegaId, cajaId, adminUserId: userId, adminEmail };
+  });
+}
+
+export async function getTenants() {
+  return await db.query('SELECT id, slug, nombre, activo, created_at FROM tenants ORDER BY created_at DESC');
+}
+
 /* ---------- Exportar todas las funciones ---------- */
 export default {
   getConsecutivo,
@@ -1091,5 +1169,7 @@ export default {
   transferenciaTesoreria,
   crearComprobanteManual,
   liquidarNomina,
-  simularRespuestaDian
+  simularRespuestaDian,
+  crearTenant,
+  getTenants
 };
