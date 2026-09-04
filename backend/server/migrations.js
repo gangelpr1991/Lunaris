@@ -138,11 +138,24 @@ defineMigration("002_add_multitenancy", async (tx) => {
   await tx.query(`ALTER TABLE consecutivos DROP CONSTRAINT IF EXISTS consecutivos_pkey`);
   await tx.query(`ALTER TABLE consecutivos ADD PRIMARY KEY ("tenantId", tipo)`);
 
-  await tx.query(`ALTER TABLE "planCuentas" DROP CONSTRAINT IF EXISTS "planCuentas_pkey"`);
-  await tx.query(`ALTER TABLE "planCuentas" ADD PRIMARY KEY ("tenantId", codigo)`);
+  // OJO nombres de tabla/columna SIN comillas dobles aca abajo (a
+  // diferencia de "tenantId"): planCuentas/productoStock/productoId/
+  // bodegaId se crearon en pgdb.js sin comillas en el CREATE TABLE, asi
+  // que Postgres los plego a minusculas de verdad (plancuentas,
+  // productostock, productoid, bodegaid). Poner comillas dobles alrededor
+  // de la forma mixed-case (como tenia esta migracion antes de este
+  // arreglo) hace que Postgres busque el nombre LITERAL "planCuentas" -
+  // que nunca existio - y la migracion completa fallaba con "no existe la
+  // relacion «planCuentas»" (probado justo ahora contra lunaris_test_mt,
+  // la copia que se dejo preparada para esto). "tenantId" si necesita
+  // comillas en todos lados porque esta migracion lo crea asi a proposito
+  // (ADD COLUMN IF NOT EXISTS "tenantId"), y el resto del codigo ya
+  // parchado (business.js, pgdb.js, db.js) lo referencia siempre citado.
+  await tx.query(`ALTER TABLE plancuentas DROP CONSTRAINT IF EXISTS plancuentas_pkey`);
+  await tx.query(`ALTER TABLE plancuentas ADD PRIMARY KEY ("tenantId", codigo)`);
 
-  await tx.query(`ALTER TABLE "productoStock" DROP CONSTRAINT IF EXISTS "productoStock_pkey"`);
-  await tx.query(`ALTER TABLE "productoStock" ADD PRIMARY KEY ("tenantId", "productoId", "bodegaId")`);
+  await tx.query(`ALTER TABLE productostock DROP CONSTRAINT IF EXISTS productostock_pkey`);
+  await tx.query(`ALTER TABLE productostock ADD PRIMARY KEY ("tenantId", productoid, bodegaid)`);
 
   // 6. Row Level Security: el candado real. Aunque alguna consulta de
   // negocio se olvide del WHERE tenantId = ..., Postgres bloquea igual
@@ -156,8 +169,19 @@ defineMigration("002_add_multitenancy", async (tx) => {
     // no hay tenant activo en la sesion (current_setting devuelve NULL con
     // el flag "true" de "no falles si no existe") - esto es lo que le
     // permite a un superadmin ver usuarios de cualquier empresa.
+    //
+    // DROP y CREATE van en dos tx.query() separados a proposito: tx.query
+    // (ver db.js) hace `client.query(sql, params)` con params=[] cuando no
+    // se le pasan, y el driver "pg" activa el protocolo simple (permite
+    // varias sentencias separadas por ";" en un solo string) SOLO en ese
+    // caso - pero entonces el resultado que devuelve ya no es un objeto
+    // unico con `.rows`, es un ARRAY con un resultado por sentencia. tx.
+    // query asume `.rows` siempre existe (`camelizeRows(...rows)`), asi
+    // que con las dos sentencias juntas revienta con "Cannot read
+    // properties of undefined (reading 'map')" - probado contra
+    // lunaris_test_mt.
+    await tx.query(`DROP POLICY IF EXISTS tenant_isolation ON ${tabla}`);
     await tx.query(`
-      DROP POLICY IF EXISTS tenant_isolation ON ${tabla};
       CREATE POLICY tenant_isolation ON ${tabla}
         USING ("tenantId" = current_setting('app.current_tenant_id', true)
                OR current_setting('app.current_tenant_id', true) IS NULL

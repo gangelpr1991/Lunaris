@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import business from '../../server/business.js';
 import db from '../../server/db.js';
+import { runMigrations } from '../../server/migrations.js';
 
-// Estos tests corren contra una base Postgres REAL (la que tengas
-// configurada en .env), no un mock - la version anterior de este archivo
+// Estos tests corren contra una base Postgres REAL (lunaris_test_mt via
+// .env.test, ver tests/setup.js) - la version anterior de este archivo
 // simulaba ../../server/db.js como si fuera una base SQLite directa
 // (better-sqlite3 con .prepare()), lo cual dejo de ser cierto desde que el
 // proyecto migro a Postgres. Cada test usa un sufijo unico (Date.now() +
@@ -17,10 +18,20 @@ function unico(prefijo) {
   return `${prefijo}-${Date.now()}-${contador}`;
 }
 
-const actor = { usuario: 'test', rol: 'admin' };
+// Desde la migracion 002 (multi-tenancy + RLS), toda tabla de negocio
+// exige un tenantId real que referencie una fila de "tenants" - sin esto,
+// cada INSERT de este archivo violaria la FK/NOT NULL de "tenantId". El
+// tenant se crea una sola vez en beforeAll y se reusa en todos los tests.
+const TEST_TENANT_ID = 'tnt-test-' + Date.now();
+const actor = { usuario: 'test', rol: 'admin', tenantId: TEST_TENANT_ID };
 
 beforeAll(async () => {
   await db.initDB();
+  await runMigrations();
+  await db.query(
+    'INSERT INTO tenants (id, slug, nombre, activo, created_at) VALUES ($1,$2,$3,$4,$5)',
+    [TEST_TENANT_ID, unico('test-tenant'), 'Empresa de pruebas (business.test.js)', 1, new Date().toISOString()]
+  );
 });
 
 describe('Business Logic - Terceros y Productos', () => {
@@ -91,10 +102,12 @@ describe('Business Logic - Inventario', () => {
     const sede = await business.createSede({
       nombre: unico('Sede'),
       ciudad: 'Bogota',
+      tenantId: TEST_TENANT_ID,
     });
     const bodega = await business.createBodega({
       nombre: unico('Bodega'),
       sedeId: sede.id,
+      tenantId: TEST_TENANT_ID,
     });
     const producto = await business.crearProducto(actor, {
       codigo: unico('PROD'),
@@ -122,6 +135,7 @@ describe('Business Logic - Tesoreria', () => {
     const sede = await business.createSede({
       nombre: unico('Sede'),
       ciudad: 'Bogota',
+      tenantId: TEST_TENANT_ID,
     });
     const cb = await db.insert('cajasBancos', {
       id: unico('cb'),
@@ -129,6 +143,7 @@ describe('Business Logic - Tesoreria', () => {
       nombre: 'Banco Test',
       sedeId: sede.id,
       saldo: 0,
+      tenantId: TEST_TENANT_ID,
     });
 
     const result = await business.registrarMovimientoTesoreriaManual(actor, {
@@ -151,6 +166,7 @@ describe('Business Logic - Tesoreria', () => {
     const sede = await business.createSede({
       nombre: unico('Sede'),
       ciudad: 'Bogota',
+      tenantId: TEST_TENANT_ID,
     });
     const cb = await db.insert('cajasBancos', {
       id: unico('cb'),
@@ -158,6 +174,7 @@ describe('Business Logic - Tesoreria', () => {
       nombre: 'Banco Test',
       sedeId: sede.id,
       saldo: 0,
+      tenantId: TEST_TENANT_ID,
     });
 
     const result = await business.registrarMovimientoTesoreriaManual(actor, {
@@ -176,10 +193,12 @@ describe('Business Logic - Ciclo completo de venta', () => {
     const sede = await business.createSede({
       nombre: unico('Sede'),
       ciudad: 'Bogota',
+      tenantId: TEST_TENANT_ID,
     });
     const bodega = await business.createBodega({
       nombre: unico('Bodega'),
       sedeId: sede.id,
+      tenantId: TEST_TENANT_ID,
     });
     const cliente = await business.crearTercero(actor, {
       tipo: 'cliente',
@@ -252,6 +271,7 @@ describe('Business Logic - Ciclo completo de venta', () => {
       nombre: 'Banco Test',
       sedeId: sede.id,
       saldo: 0,
+      tenantId: TEST_TENANT_ID,
     });
     const recibo = await business.registrarRecibo(actor, {
       facturaId: fac.id,
@@ -271,10 +291,12 @@ describe('Business Logic - Ciclo completo de venta', () => {
     const sede = await business.createSede({
       nombre: unico('Sede'),
       ciudad: 'Bogota',
+      tenantId: TEST_TENANT_ID,
     });
     const bodega = await business.createBodega({
       nombre: unico('Bodega'),
       sedeId: sede.id,
+      tenantId: TEST_TENANT_ID,
     });
     const cliente = await business.crearTercero(actor, {
       tipo: 'cliente',
@@ -323,6 +345,7 @@ describe('Business Logic - Ciclo completo de venta', () => {
       nombre: 'Banco',
       sedeId: sede.id,
       saldo: 0,
+      tenantId: TEST_TENANT_ID,
     });
     const sobrepago = await business.registrarRecibo(actor, {
       facturaId: fac.id,
@@ -338,5 +361,94 @@ describe('Business Logic - Ciclo completo de venta', () => {
     // con un string en vez de {id}) hacia que este test "pasara" por la razon
     // equivocada, sin probar de verdad el sobrepago.
     expect(sobrepago.error).toMatch(/saldo pendiente/i);
+  });
+});
+
+describe('Business Logic - Multi-tenancy (aislamiento entre empresas)', () => {
+  it('un tenant no ve ni puede tocar los terceros de otro tenant', async () => {
+    const otroTenantId = 'tnt-test-otro-' + Date.now();
+    await db.query(
+      'INSERT INTO tenants (id, slug, nombre, activo, created_at) VALUES ($1,$2,$3,$4,$5)',
+      [otroTenantId, unico('otro-tenant'), 'Otra empresa (aislamiento)', 1, new Date().toISOString()]
+    );
+    const actorOtro = { usuario: 'test-otro', rol: 'admin', tenantId: otroTenantId };
+
+    const numDoc = unico('doc');
+    const propio = await business.crearTercero(actor, {
+      tipo: 'cliente', tipoDoc: 'CC', numDoc, nombre: 'Cliente tenant A',
+    });
+    expect(propio.error).toBeUndefined();
+
+    // Mismo numDoc en el otro tenant: no debe chocar con la unicidad
+    // (la unicidad de terceros es solo app-level via SELECT, y RLS acota
+    // ese SELECT al tenant activo) - si esto fallara con "ya existe",
+    // significaria que el SELECT de duplicados esta viendo filas de otro
+    // tenant, es decir que el aislamiento no esta funcionando.
+    const enOtro = await business.crearTercero(actorOtro, {
+      tipo: 'cliente', tipoDoc: 'CC', numDoc, nombre: 'Cliente tenant B',
+    });
+    expect(enOtro.error).toBeUndefined();
+    expect(enOtro.id).not.toBe(propio.id);
+
+    // El tenant B no debe poder leer (via SELECT directo bajo su propio
+    // contexto de sesion) la fila del tenant A - RLS debe filtrarla.
+    const fugaDesdeB = await db.transaction(async (tx) => {
+      return await tx.queryOne('SELECT id FROM terceros WHERE id = $1', [propio.id]);
+    }, otroTenantId);
+    expect(fugaDesdeB).toBeNull();
+
+    // Y el tenant A si debe poder ver la suya.
+    const propioDesdeA = await db.transaction(async (tx) => {
+      return await tx.queryOne('SELECT id FROM terceros WHERE id = $1', [propio.id]);
+    }, TEST_TENANT_ID);
+    expect(propioDesdeA?.id).toBe(propio.id);
+  });
+
+  it('db.loadFullState/saveFullState (usados por GET/PUT /api/estado) acotan por tenantId', async () => {
+    // Este test existe porque el bug real que detecto ese acotamiento no
+    // estaba en pgdb.js (donde se implementa) sino en db.js, que reexporta
+    // loadFullState/saveFullState con una firma vieja sin el parametro
+    // tenantId y lo descartaba en silencio - solo se detecto probando el
+    // endpoint HTTP real con curl, no con este archivo. Sin un tenantId
+    // real, ambas funciones deben rechazar explicitamente (nunca devolver
+    // datos de todos los tenants mezclados ni reventar con un error de
+    // Postgres confuso).
+    await expect(db.loadFullState()).rejects.toThrow(/tenantId/);
+    await expect(db.saveFullState({}, undefined)).rejects.toThrow(/tenantId/);
+
+    const estado = await db.loadFullState(TEST_TENANT_ID);
+    expect(Array.isArray(estado.terceros)).toBe(true);
+
+    const otroTenantId = 'tnt-test-loadstate-' + Date.now();
+    await db.query(
+      'INSERT INTO tenants (id, slug, nombre, activo, created_at) VALUES ($1,$2,$3,$4,$5)',
+      [otroTenantId, unico('otro-loadstate'), 'Otra empresa (loadFullState)', 1, new Date().toISOString()]
+    );
+    const estadoOtro = await db.loadFullState(otroTenantId);
+    const numDocsDelPrimero = estado.terceros.map((t) => t.numDoc);
+    const hayFuga = estadoOtro.terceros.some((t) => numDocsDelPrimero.includes(t.numDoc));
+    expect(hayFuga).toBe(false);
+  });
+
+  it('crearTenant aprovisiona una empresa nueva con su admin y datos minimos', async () => {
+    const slug = unico('empresa-nueva');
+    const resultado = await business.crearTenant({ usuario: 'superadmin-test', rol: 'superadmin' }, {
+      nombre: 'Empresa Nueva de Prueba',
+      slug,
+      adminNombre: 'Admin Nueva Empresa',
+      adminEmail: `admin-${slug}@lunaris-test.com`,
+      adminPassword: 'clave12345',
+    });
+    expect(resultado.error).toBeUndefined();
+    expect(resultado.tenantId).toBeTruthy();
+
+    const usuario = await db.queryOne('SELECT * FROM usuarios WHERE email = $1', [resultado.adminEmail]);
+    expect(usuario.rol).toBe('admin_empresa');
+    expect(usuario.tenantId).toBe(resultado.tenantId);
+
+    const cuentas = await db.transaction(async (tx) => {
+      return await tx.query('SELECT codigo FROM plancuentas');
+    }, resultado.tenantId);
+    expect(cuentas.length).toBeGreaterThan(0);
   });
 });

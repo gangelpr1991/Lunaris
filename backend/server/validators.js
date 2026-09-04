@@ -157,6 +157,14 @@ export const simularDianSchema = z.object({
   id: z.string().min(1),
 });
 
+export const crearTenantSchema = z.object({
+  nombre: z.string().min(1, "Nombre de la empresa requerido"),
+  slug: z.string().min(2, "Identificador requerido (minimo 2 caracteres)").regex(/^[a-z0-9-]+$/, "Solo minusculas, numeros y guiones"),
+  adminNombre: z.string().min(1, "Nombre del administrador requerido"),
+  adminEmail: z.string().email("Email invalido"),
+  adminPassword: z.string().min(8, "La contrasena debe tener al menos 8 caracteres"),
+});
+
 const VALIDATORS = {
   CREAR_COTIZACION: crearCotizacionSchema,
   APROBAR_COTIZACION: aprobarCotizacionSchema,
@@ -178,6 +186,7 @@ const VALIDATORS = {
   TRANSFERENCIA_TESORERIA: transferenciaTesoreriaSchema,
   LIQUIDAR_NOMINA: liquidarNominaSchema,
   SIMULAR_DIAN: simularDianSchema,
+  CREAR_EMPRESA: crearTenantSchema,
 };
 
 export function validateBody(actionType) {
