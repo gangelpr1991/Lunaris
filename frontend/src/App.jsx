@@ -7,7 +7,7 @@ import {
   FileText, CreditCard, Truck, PackageCheck,
   BadgeCheck, BadgeX, Ban, Printer, ScanLine, History, ChevronsUpDown,
   TrendingUp, TrendingDown, Store, Wallet2, Scale, FileSpreadsheet,
-  UserCog, KeyRound, Building, Warehouse, ListChecks, RefreshCw, Trash2,
+  UserCog, KeyRound, Building, Building2, Warehouse, ListChecks, RefreshCw, Trash2,
   X, ArrowLeftRight, Mail, Phone,
   BarChart3, PieChart as PieChartIcon, DollarSign, AlertOctagon, ChevronLeft
 } from "lucide-react";
@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import Login from "./components/Login.jsx";
+import { api } from "./api.js";
 import { fmtCOP, fmtNum, fmtDate, fmtDateTime } from "./data/utils.js";
 import {
   Badge, Btn, IconBtn, KPICard, Panel, EmptyState, Field, inputCls,
@@ -66,7 +67,13 @@ function DashboardPage({ data, theme, goTo, role }) {
     <div className="space-y-5">
       <div className={cx("rounded-xl border p-5 flex flex-wrap items-center gap-3 justify-between", theme.surface, theme.border)}>
         <div>
-          <h2 className={cx("nx-display text-lg font-bold", theme.text)}>Hola, bienvenido a {EMPRESA.razonSocial}</h2>
+          {/* data.empresa?.razonSocial (no solo EMPRESA, la constante de
+              demo): con varias empresas reales en la plataforma, cada
+              tenant tiene su propio registro "empresa" (sembrado al
+              crearlo, ver crearTenant en business.js) - usar solo la
+              constante estatica le mostraria "Grupo Horizonte S.A.S." a
+              CUALQUIER empresa, sin importar cual sea la logueada. */}
+          <h2 className={cx("nx-display text-lg font-bold", theme.text)}>Hola, bienvenido a {data.empresa?.razonSocial || EMPRESA.razonSocial}</h2>
           <p className={cx("text-sm mt-0.5", theme.textMuted)}>Panel ejecutivo · {new Date().toLocaleDateString("es-CO", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1703,7 +1710,16 @@ function ConfiguracionPage({ data, dispatch, actor, theme, role, onResetDemo }) 
       {tab === "empresa" && (
         <Panel theme={theme} title="Datos legales">
           <div className="grid sm:grid-cols-2 gap-4 text-sm">
-            {[["Razon social", EMPRESA.razonSocial], ["NIT", EMPRESA.nit], ["Responsabilidad fiscal", EMPRESA.responsabilidad], ["Direccion", EMPRESA.direccion], ["Telefono", EMPRESA.telefono], ["Correo", EMPRESA.email], ["Moneda", EMPRESA.moneda], ["Zona horaria", EMPRESA.zonaHoraria]].map(([l, v]) => (
+            {[
+              ["Razon social", data.empresa?.razonSocial || EMPRESA.razonSocial],
+              ["NIT", data.empresa?.nit || EMPRESA.nit],
+              ["Responsabilidad fiscal", data.empresa?.responsabilidad || EMPRESA.responsabilidad],
+              ["Direccion", data.empresa?.direccion || EMPRESA.direccion],
+              ["Telefono", data.empresa?.telefono || EMPRESA.telefono],
+              ["Correo", data.empresa?.email || EMPRESA.email],
+              ["Moneda", data.empresa?.moneda || EMPRESA.moneda],
+              ["Zona horaria", data.empresa?.zonaHoraria || EMPRESA.zonaHoraria],
+            ].map(([l, v]) => (
               <div key={l}><p className={cx("text-xs", theme.textMuted)}>{l}</p><p className={cx("font-semibold", theme.text)}>{v}</p></div>
             ))}
           </div>
@@ -1770,6 +1786,146 @@ function ConfiguracionPage({ data, dispatch, actor, theme, role, onResetDemo }) 
 }
 
 /* ============================================================================
+   MODULO: PLATAFORMA (solo superadmin - crear/listar empresas)
+   ============================================================================ */
+
+// normalize("NFD") separa cada letra acentuada en (letra base + marca
+// diacritica combinante) - el segundo replace elimina esas marcas
+// (rango Unicode U+0300-U+036F) dejando solo la letra base, asi
+// "Ferretería" -> "ferreteria" en vez de un slug con caracteres raros.
+const slugify = (s) => s.toLowerCase().trim().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+
+function PlataformaPage({ theme }) {
+  const [tenants, setTenants] = useState([]);
+  const [loadingList, setLoadingList] = useState(true);
+  const [listError, setListError] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [form, setForm] = useState({ nombre: "", slug: "", adminNombre: "", adminEmail: "", adminPassword: "" });
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState(null);
+  const [success, setSuccess] = useState(null);
+
+  const cargar = async () => {
+    setLoadingList(true);
+    setListError(null);
+    try {
+      const res = await api.getTenants();
+      setTenants(res.tenants || []);
+    } catch (e) {
+      setListError(e.message);
+    } finally {
+      setLoadingList(false);
+    }
+  };
+
+  useEffect(() => { cargar(); }, []);
+
+  const abrirModal = () => {
+    setForm({ nombre: "", slug: "", adminNombre: "", adminEmail: "", adminPassword: "" });
+    setCreateError(null);
+    setModalOpen(true);
+  };
+
+  const crear = async () => {
+    setCreateError(null);
+    if (!form.nombre.trim() || !form.slug.trim() || !form.adminNombre.trim() || !form.adminEmail.trim() || form.adminPassword.length < 8) {
+      setCreateError("Completa todos los campos. La contrasena debe tener al menos 8 caracteres.");
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await api.accion("CREAR_EMPRESA", form);
+      if (!res.ok) throw new Error(res.error);
+      setModalOpen(false);
+      setSuccess({ nombre: form.nombre, adminEmail: form.adminEmail });
+      await cargar();
+    } catch (e) {
+      setCreateError(e.message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Breadcrumb theme={theme} items={["Plataforma", "Empresas"]} />
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className={cx("text-xl font-bold nx-display", theme.text)}>Empresas registradas</h1>
+          <p className={cx("text-sm", theme.textMuted)}>Alta y administracion de las empresas que operan sobre Lunaris. Cada empresa ve unicamente sus propios datos.</p>
+        </div>
+        <Btn theme={theme} icon={Plus} onClick={abrirModal}>Nueva empresa</Btn>
+      </div>
+
+      {success && (
+        <div className="rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 px-4 py-3 text-sm flex items-start gap-2.5">
+          <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
+          <span>Empresa <b>{success.nombre}</b> creada. Su administrador ya puede ingresar con <b>{success.adminEmail}</b> y la contrasena que definiste.</span>
+        </div>
+      )}
+
+      <Panel theme={theme}>
+        {loadingList ? (
+          <p className={cx("text-sm text-center py-8", theme.textMuted)}>Cargando empresas...</p>
+        ) : listError ? (
+          <EmptyState theme={theme} icon={Building2} title="No se pudo cargar la lista" hint={listError} />
+        ) : (
+          <DataTable
+            theme={theme}
+            rows={tenants}
+            searchKeys={["nombre", "slug"]}
+            columns={[
+              { key: "nombre", label: "Empresa", sortable: true },
+              { key: "slug", label: "Identificador" },
+              { key: "activo", label: "Estado", render: (r) => (
+                <span className={cx("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold", r.activo ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500")}>
+                  {r.activo ? "Activa" : "Inactiva"}
+                </span>
+              ) },
+              { key: "createdAt", label: "Creada", sortable: true, render: (r) => fmtDate(r.createdAt) },
+            ]}
+            emptyTitle="Todavia no hay empresas"
+            emptyHint="Crea la primera empresa para empezar a operar Lunaris como plataforma multiempresa."
+          />
+        )}
+      </Panel>
+
+      <Modal
+        open={modalOpen} onClose={() => setModalOpen(false)} theme={theme} title="Nueva empresa"
+        footer={<>
+          <Btn theme={theme} variant="secondary" onClick={() => setModalOpen(false)}>Cancelar</Btn>
+          <Btn theme={theme} onClick={crear} disabled={creating}>{creating ? "Creando..." : "Crear empresa"}</Btn>
+        </>}
+      >
+        <div className="space-y-3">
+          {createError && <div className="rounded-lg border border-red-300 bg-red-50 text-red-700 px-3 py-2 text-xs">{createError}</div>}
+          <Field label="Nombre de la empresa" required theme={theme}>
+            <input
+              className={inputCls(theme)}
+              value={form.nombre}
+              onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value, slug: f.slug === slugify(f.nombre) ? slugify(e.target.value) : f.slug }))}
+              placeholder="Ferreteria El Tornillo S.A.S."
+            />
+          </Field>
+          <Field label="Identificador (slug)" required hint="Solo minusculas, numeros y guiones. Unico en toda la plataforma." theme={theme}>
+            <input className={inputCls(theme)} value={form.slug} onChange={(e) => setForm((f) => ({ ...f, slug: slugify(e.target.value) }))} placeholder="ferreteria-el-tornillo" />
+          </Field>
+          <Field label="Nombre del administrador" required theme={theme}>
+            <input className={inputCls(theme)} value={form.adminNombre} onChange={(e) => setForm((f) => ({ ...f, adminNombre: e.target.value }))} placeholder="Nombre y apellido" />
+          </Field>
+          <Field label="Email del administrador" required theme={theme}>
+            <input type="email" className={inputCls(theme)} value={form.adminEmail} onChange={(e) => setForm((f) => ({ ...f, adminEmail: e.target.value }))} placeholder="admin@empresa.com" />
+          </Field>
+          <Field label="Contrasena inicial" required hint="Minimo 8 caracteres. El administrador podra cambiarla despues." theme={theme}>
+            <input type="password" className={inputCls(theme)} value={form.adminPassword} onChange={(e) => setForm((f) => ({ ...f, adminPassword: e.target.value }))} placeholder="********" autoComplete="new-password" />
+          </Field>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/* ============================================================================
    APP RAIZ
    ============================================================================ */
 
@@ -1783,7 +1939,13 @@ export default function App() {
     init, dispatch, goTo,
   } = useAppStore();
 
-  useEffect(() => { init(); }, []);
+  // Dependencia [isAuthenticated] (no []): tiene que re-correr cuando el
+  // usuario hace login SIN recargar la pagina (el formulario de Login solo
+  // hace setUser/setToken, no un reload) - si dependiera de [], el store
+  // se quedaria con el EMPTY_STATE/noTenant de antes del login, aunque el
+  // usuario recien logueado si tenga tenantId. Tambien vuelve a correr al
+  // hacer logout, limpiando los datos de la sesion anterior.
+  useEffect(() => { init(user?.tenantId); }, [isAuthenticated]);
 
   const theme = useMemo(() => themeOf(dark), [dark]);
 
@@ -1797,6 +1959,21 @@ export default function App() {
   }, [lastResult]);
 
   useEffect(() => { if (!puedeVer(role, currentModule)) goTo("dashboard"); }, [role, currentModule]);
+  // Un superadmin de plataforma sin empresa asociada (tenantId null) no
+  // tiene estado de negocio que ver (GET /api/estado ni se intenta, ver
+  // useAppStore.init) - lo mandamos directo al panel de Plataforma en vez
+  // de dejarlo en un dashboard vacio que no significa nada para el.
+  //
+  // Depende de user?.tenantId (no de noTenant, el flag del store) a
+  // proposito: noTenant lo fija init(), que es async y no resuelve en el
+  // mismo ciclo de efectos que este - si este efecto dependiera de
+  // noTenant, correria con el valor VIEJO (de antes del login) en la misma
+  // pasada en la que isAuthenticated recien paso a true, mandando a
+  // Plataforma a CUALQUIER usuario (incluso uno con empresa real) hasta
+  // que init() terminara de resolver un instante despues. user.tenantId ya
+  // viene completo y sincronico desde el momento del login (AuthContext lo
+  // guarda tal cual lo devuelve POST /api/auth/login), sin ese retraso.
+  useEffect(() => { if (isAuthenticated && user && !user.tenantId) goTo("plataforma"); }, [isAuthenticated, user]);
 
   const notifications = useMemo(() => computeAlerts(data), [data]);
 
@@ -1837,6 +2014,13 @@ export default function App() {
     case "movil": content = <MovilPage {...pageProps} />; break;
     case "integraciones": content = <IntegracionesPage {...pageProps} />; break;
     case "configuracion": content = <ConfiguracionPage {...pageProps} onResetDemo={() => dispatch({ type: "RESET_DEMO", payload: {} })} />; break;
+    // Defensa en profundidad en el frontend: puedeVer ya deja pasar a
+    // admin_empresa a "plataforma" (su corto-circuito generico), pero
+    // crear/listar empresas es exclusivo de superadmin en el backend (ver
+    // PERMISOS_ACCION.CREAR_EMPRESA y GET /api/tenants en index.js) - sin
+    // este chequeo, un admin_empresa veria el panel (aunque cada llamada
+    // real le devolveria 403).
+    case "plataforma": content = role === "superadmin" ? <PlataformaPage theme={theme} /> : <EmptyState theme={theme} title="Sin acceso" hint="Solo el superadministrador de la plataforma puede gestionar empresas." />; break;
     default: content = <DashboardPage {...pageProps} />;
   }
 

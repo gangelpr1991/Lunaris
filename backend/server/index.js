@@ -107,7 +107,13 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
     res.json({
       ok: true,
       token,
-      user: { id: user.id, email: user.email, nombre: user.nombre, rol: user.rol },
+      // tenantId es necesario en el frontend para saber si este usuario
+      // tiene una empresa asociada (admin_empresa o superadmin "con
+      // empresa") o es superadmin de plataforma puro (tenantId null) - sin
+      // esto en la respuesta, el frontend no tiene forma de distinguir los
+      // casos (el JWT lo lleva, pero el frontend nunca lo decodifica, solo
+      // usa el objeto "user" que llega aca).
+      user: { id: user.id, email: user.email, nombre: user.nombre, rol: user.rol, tenantId: user.tenantId ?? null },
     });
   } catch (e) {
     logger.error(`Error en login: ${e.message}`);

@@ -76,7 +76,7 @@ export const COLUMN_CASE_MAP = {
   salariobase: "salarioBase", auxtransporte: "auxTransporte", deduccionestotal: "deduccionesTotal",
   netopagar: "netoPagar", aportespatronales: "aportesPatronales", aportespatronalestotal: "aportesPatronalesTotal",
   prestacionestotal: "prestacionesTotal", costototalempresa: "costoTotalEmpresa", password_hash: "passwordHash",
-  created_at: "createdAt"
+  created_at: "createdAt", razonsocial: "razonSocial", zonahoraria: "zonaHoraria"
 };
 
 function camelizeRowPG(row) {
@@ -144,6 +144,16 @@ export async function loadFullStatePG(tenantId) {
         if (s.productoid === p.id) p.stock[s.bodegaid] = s.cantidad;
       }
     }
+
+    // "empresa" es la unica tabla de TABLES que conceptualmente tiene
+    // exactamente UNA fila por tenant (la sembrada por crearTenant en
+    // business.js) - el loop generico de arriba la deja como array (como
+    // cualquier otra tabla), pero el frontend siempre la trato como un
+    // objeto unico (data.empresa.razonSocial, nunca data.empresa[0]...).
+    // Esto nunca se habia notado porque el frontend nunca leyo data.empresa
+    // de verdad hasta el panel de Plataforma - antes usaba una constante
+    // estatica de demostracion en su lugar.
+    state.empresa = state.empresa[0] || null;
 
     await client.query("COMMIT");
     return state;
