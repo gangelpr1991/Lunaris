@@ -132,9 +132,22 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 app.use("/api/estado", authMiddleware);
 app.use("/api/accion", authMiddleware);
 
-app.get('/api/estado', async (_req, res) => {
+// Un usuario sin tenantId es el superadmin de plataforma (ve/crea
+// empresas, no opera el dia a dia de ninguna en particular) - el sync de
+// estado completo de una empresa (GET/PUT /api/estado) no tiene sentido
+// para el sin antes elegir/impersonar una, asi que se rechaza explicito en
+// vez de dejar que loadFullStatePG/saveFullStatePG revienten con un error
+// generico de "tenantId requerido".
+function requireTenant(req, res, next) {
+  if (!req.user.tenantId) {
+    return res.status(400).json({ ok: false, error: "Este usuario de plataforma no tiene una empresa asociada. Cree o seleccione una empresa primero." });
+  }
+  next();
+}
+
+app.get('/api/estado', requireTenant, async (req, res) => {
   try {
-    const data = await loadFullState();
+    const data = await loadFullState(req.user.tenantId);
     // El hash de la contrasena nunca debe salir del servidor, ni siquiera
     // hasheado - el frontend no lo necesita para nada.
     if (Array.isArray(data.usuarios)) {
@@ -148,12 +161,38 @@ app.get('/api/estado', async (_req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-app.put("/api/estado", requireWriteRole, async (req, res) => {
+app.put("/api/estado", requireTenant, requireWriteRole, async (req, res) => {
   try {
-    await saveFullState(req.body);
+    await saveFullState(req.body, req.user.tenantId);
     res.json({ ok: true });
   } catch (e) {
     logger.error(`Error guardando estado: ${e.message}`);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/tenants:
+ *   get:
+ *     tags: [Tenants]
+ *     summary: Listar empresas registradas en la plataforma (solo superadmin)
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de empresas
+ *       403:
+ *         description: Solo el superadmin de plataforma puede listar empresas
+ */
+app.get("/api/tenants", authMiddleware, async (req, res) => {
+  if (req.user.rol !== "superadmin") {
+    return res.status(403).json({ ok: false, error: "Solo el superadmin de plataforma puede listar empresas." });
+  }
+  try {
+    res.json({ ok: true, tenants: await business.getTenants() });
+  } catch (e) {
+    logger.error(`Error listando empresas: ${e.message}`);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -179,6 +218,7 @@ const ACTIONS = {
   TRANSFERENCIA_TESORERIA: (actor, p) => business.transferenciaTesoreria(actor, p),
   LIQUIDAR_NOMINA: (actor, p) => business.liquidarNomina(actor, p),
   SIMULAR_DIAN: (actor, p) => business.simularRespuestaDian(actor, p),
+  CREAR_EMPRESA: (actor, p) => business.crearTenant(actor, p),
 };
 
 /**
@@ -187,7 +227,7 @@ const ACTIONS = {
  *   post:
  *     tags: [Negocio]
  *     summary: Ejecutar accion de negocio
- *     description: "Acciones disponibles: CREAR_COTIZACION, APROBAR_COTIZACION, CONVERTIR_PEDIDO, GENERAR_REMISION, GENERAR_FACTURA, REGISTRAR_RECIBO, ANULAR_FACTURA, CREAR_OC, RECIBIR_OC, GENERAR_FACTURA_COMPRA, PAGAR_FACTURA_COMPRA, CREAR_TERCERO, CREAR_PRODUCTO, AJUSTE_INVENTARIO, TRANSFERENCIA_INVENTARIO, COMPROBANTE_MANUAL, MOVIMIENTO_TESORERIA, TRANSFERENCIA_TESORERIA, LIQUIDAR_NOMINA, SIMULAR_DIAN"
+ *     description: "Acciones disponibles: CREAR_COTIZACION, APROBAR_COTIZACION, CONVERTIR_PEDIDO, GENERAR_REMISION, GENERAR_FACTURA, REGISTRAR_RECIBO, ANULAR_FACTURA, CREAR_OC, RECIBIR_OC, GENERAR_FACTURA_COMPRA, PAGAR_FACTURA_COMPRA, CREAR_TERCERO, CREAR_PRODUCTO, AJUSTE_INVENTARIO, TRANSFERENCIA_INVENTARIO, COMPROBANTE_MANUAL, MOVIMIENTO_TESORERIA, TRANSFERENCIA_TESORERIA, LIQUIDAR_NOMINA, SIMULAR_DIAN, CREAR_EMPRESA"
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -264,7 +304,7 @@ async function start() {
   app.listen(PORT, () => {
     logger.info(`Lunaris API en http://localhost:${PORT}`);
     logger.info(`Base de datos: ${env.DB_TYPE}`);
-    logger.info("Logica de negocio — 20 acciones disponibles.");
+    logger.info("Logica de negocio — 21 acciones disponibles.");
     logger.info("Seguridad: Helmet + CORS + Rate Limit + JWT + Zod + RBAC.");
     logger.info(`Documentacion API: http://localhost:${PORT}/api/docs`);
   });

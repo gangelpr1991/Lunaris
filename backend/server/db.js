@@ -14,13 +14,13 @@ export function initDB() {
   throw new Error("SQLite no está soportado. Usa DB_TYPE=postgresql en .env");
 }
 
-export function loadFullState() {
-  if (usePG) return loadFullStatePG();
+export function loadFullState(tenantId) {
+  if (usePG) return loadFullStatePG(tenantId);
   throw new Error("SQLite no está soportado");
 }
 
-export function saveFullState(data) {
-  if (usePG) return saveFullStatePG(data);
+export function saveFullState(data, tenantId) {
+  if (usePG) return saveFullStatePG(data, tenantId);
   throw new Error("SQLite no está soportado");
 }
 
@@ -161,13 +161,24 @@ export async function transaction(callback, tenantId) {
   }
 }
 
+// Todas las columnas existentes se crearon SIN comillas en el CREATE TABLE
+// original, asi que Postgres las plego a minusculas (sedeId -> sedeid) y
+// referenciarlas sin comillas (como hacen insert/update/find de abajo) las
+// resuelve bien. "tenantId" es la unica excepcion: la migracion 002 la
+// agrego CON comillas (`ADD COLUMN IF NOT EXISTS "tenantId"`) a proposito,
+// para que coincida con como ya se referencia en todo el resto del codigo
+// (business.js, pgdb.js) - sin citarla aca tambien, Postgres la plegaria a
+// "tenantid" y fallaria con "no existe la columna «tenantid»" (columna
+// real: "tenantId", mixed-case).
+const qcol = (c) => (c === "tenantId" ? '"tenantId"' : c);
+
 export async function insert(table, data) {
   const tableDef = getTable(table);
   if (!tableDef) throw new Error(`Tabla ${table} no existe`);
-  
+
   const keys = Object.keys(data);
   const values = keys.map((_, i) => `$${i + 1}`);
-  const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${values.join(", ")}) RETURNING *`;
+  const sql = `INSERT INTO ${table} (${keys.map(qcol).join(", ")}) VALUES (${values.join(", ")}) RETURNING *`;
   const result = await query(sql, Object.values(data));
   return result[0] || null;
 }
@@ -175,9 +186,9 @@ export async function insert(table, data) {
 export async function update(table, id, data) {
   const tableDef = getTable(table);
   if (!tableDef) throw new Error(`Tabla ${table} no existe`);
-  
+
   const keys = Object.keys(data);
-  const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(", ");
+  const setClause = keys.map((key, i) => `${qcol(key)} = $${i + 1}`).join(", ");
   const sql = `UPDATE ${table} SET ${setClause} WHERE ${tableDef.pk} = $${keys.length + 1} RETURNING *`;
   const result = await query(sql, [...Object.values(data), id]);
   return result[0] || null;
@@ -198,7 +209,7 @@ export async function find(table, filters = {}) {
     const sql = `SELECT * FROM ${table}`;
     return await query(sql);
   }
-  const conditions = keys.map((key, i) => `${key} = $${i + 1}`).join(" AND ");
+  const conditions = keys.map((key, i) => `${qcol(key)} = $${i + 1}`).join(" AND ");
   const sql = `SELECT * FROM ${table} WHERE ${conditions}`;
   return await query(sql, Object.values(filters));
 }

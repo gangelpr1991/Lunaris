@@ -17,6 +17,19 @@ const envSchema = z.object({
   PG_DATABASE: z.string().optional().default("lunaris"),
   PG_USER: z.string().optional().default("postgres"),
   PG_PASSWORD: z.string().optional().default("postgres"),
+  // Credenciales SEPARADAS para pg_dump (ver backup.js). PG_USER/PG_PASSWORD
+  // ahora apuntan a un rol de aplicacion sin privilegios de superusuario
+  // (lunaris_app, NOSUPERUSER NOBYPASSRLS - necesario para que Row Level
+  // Security aisle de verdad entre empresas, ver migrations.js) y pg_dump
+  // usa COPY internamente, que Postgres rechaza sobre una tabla con FORCE
+  // ROW LEVEL SECURITY para cualquier rol sujeto a esas politicas, sea o
+  // no el dueno de la tabla. Sin credenciales de backup con permiso de
+  // bypasear RLS (superusuario, o un rol con BYPASSRLS), el backup
+  // automatico simplemente falla en silencio cada vez que corre. Si no se
+  // definen, cae de vuelta a PG_USER/PG_PASSWORD (compatibilidad con
+  // instalaciones que todavia no separaron los roles).
+  PG_BACKUP_USER: z.string().optional(),
+  PG_BACKUP_PASSWORD: z.string().optional(),
 
   LOG_LEVEL: z.enum(["error", "warn", "info", "debug"]).default("info"),
 
