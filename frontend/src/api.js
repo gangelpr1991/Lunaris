@@ -1,6 +1,16 @@
 const BASE = "/api";
 
-let _token = null;
+// Se inicializa leyendo localStorage directamente (no esperando a que
+// AuthContext lo empuje via setToken) porque los modulos ES se evaluan
+// ANTES de que se monte cualquier componente React - esto elimina una
+// condicion de carrera real: al recargar la pagina con sesion ya
+// guardada, el efecto que llama a AuthContext.setToken() y el efecto de
+// App.jsx que dispara la primera peticion (init -> getEstado) corren en
+// el mismo commit, pero de HIJO a PADRE (App primero, AuthProvider
+// despues, porque AuthProvider envuelve a App) - sin esto, esa primera
+// peticion saldria sin el header Authorization y caeria en un 401. La
+// clave debe coincidir con TOKEN_KEY en contexts/AuthContext.jsx.
+let _token = (typeof localStorage !== "undefined" && localStorage.getItem("lunaris_token")) || null;
 
 async function request(url, options = {}) {
   const headers = { "Content-Type": "application/json", ...options.headers };

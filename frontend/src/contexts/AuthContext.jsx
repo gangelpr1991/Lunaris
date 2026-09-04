@@ -50,6 +50,10 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Red de seguridad para la rehidratacion inicial (token leido de
+  // localStorage en el useState de arriba, sin pasar por login()) - el
+  // camino de login() en si NO depende de este efecto, ver el comentario
+  // ahi abajo sobre por que.
   useEffect(() => {
     if (token) {
       api.setToken(token);
@@ -66,6 +70,18 @@ export function AuthProvider({ children }) {
       const { token: newToken, user: userData } = res;
       localStorage.setItem(TOKEN_KEY, newToken);
       localStorage.setItem(USER_KEY, JSON.stringify(userData));
+      // api.setToken(newToken) sincronico, ADEMAS de (no en vez de)
+      // setToken(newToken) mas abajo: App.jsx tiene un efecto que reacciona
+      // a isAuthenticated y dispara init() -> api.getEstado() de
+      // inmediato. Los efectos de React corren de hijo a padre en el mismo
+      // commit, y AuthProvider es el padre de App - si el token solo se
+      // fijara en el modulo api.js via el useEffect [token] de arriba (que
+      // vive en este mismo componente, el padre), ese efecto correria
+      // DESPUES del de App, y la primera peticion de init() saldria sin el
+      // header Authorization correcto (401), cayendo al catch que muestra
+      // datos SEED de demostracion como si fueran reales. Fijarlo aca,
+      // sincronico y antes que cualquier setState, elimina esa carrera.
+      api.setToken(newToken);
       setToken(newToken);
       setUser(userData);
       return userData;
